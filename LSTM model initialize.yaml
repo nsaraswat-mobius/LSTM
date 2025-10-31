@@ -22,10 +22,10 @@ implementation:
         import pickle
         import sys
         
-        try:
-            from nesy_factory.RNNs import LSTM
-        except ImportError:
-            from nesy_factory.RNNs.lstm import LSTM
+        # Add src to path if needed
+        sys.path.insert(0, '/usr/local/lib/python3.10/site-packages')
+        
+        from nesy_factory.RNNs.lstm import LSTM
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
@@ -81,7 +81,7 @@ implementation:
         with open(args.model, "wb") as f:
             pickle.dump(model_obj, f)
 
-        print(f"✅ Saved LSTM model to {args.model}")
+        print(f" Saved LSTM model to {args.model}")
     args:
       - --config
       - {inputValue: config}
