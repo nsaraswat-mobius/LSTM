@@ -1,0 +1,74 @@
+name: Initialize LSTM Model
+description: Initializes the LSTM model for time series forecasting.
+inputs:
+  - {name: config, type: String}
+outputs:
+  - {name: model, type: Model}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v24-gpu
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        
+        from nesy_factory.RNNs.lstm import LSTM
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--model', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        # Build LSTM model configuration
+        model_config = {
+            'input_dim': len(config['feature_columns']),
+            'hidden_dim': config['hidden_dim'],
+            'output_dim': 1,
+            'num_layers': config['num_layers'],
+            'dropout': config['dropout'],
+            'optimizer': 'adam',
+            'learning_rate': config['learning_rate'],
+            'epochs': config['epochs'],
+            'loss_function': config['loss_function']
+        }
+
+        # Initialize LSTM model
+        print(f"Initializing LSTM model with config: {model_config}")
+        model_obj = LSTM(model_config)
+        
+        # Count parameters
+        total_params = sum(p.numel() for p in model_obj.parameters())
+        trainable_params = sum(p.numel() for p in model_obj.parameters() if p.requires_grad)
+        
+        print(f"LSTM Model initialized successfully")
+        print(f"  - Input Dimension: {model_config['input_dim']}")
+        print(f"  - Hidden Dimension: {model_config['hidden_dim']}")
+        print(f"  - Output Dimension: {model_config['output_dim']}")
+        print(f"  - Number of Layers: {model_config['num_layers']}")
+        print(f"  - Dropout: {model_config['dropout']}")
+        print(f"  - Total Parameters: {total_params:,}")
+        print(f"  - Trainable Parameters: {trainable_params:,}")
+
+        # Save model to output path
+        os.makedirs(os.path.dirname(args.model), exist_ok=True)
+        with open(args.model, "wb") as f:
+            pickle.dump(model_obj, f)
+
+        print(f" Saved LSTM model to {args.model}")
+      args:
+        - --config
+        - {inputValue: config}
+        - --model
+        - {outputPath: model}
