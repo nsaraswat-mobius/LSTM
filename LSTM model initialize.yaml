@@ -1,12 +1,12 @@
-name: Initialize LSTM Model
-description: Initializes the LSTM model for time series forecasting.
+name: Initialize VAE Model
+description: Initializes the VAE model for signature failure detection.
 inputs:
   - {name: config, type: String}
 outputs:
   - {name: model, type: Model}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v24-gpu
+    image: nikhilv215/nesy-factory:v22
     command:
       - sh
       - -c
@@ -22,7 +22,9 @@ implementation:
         import pickle
         import sys
         
-        from nesy_factory.RNNs.lstm import LSTM
+        from nesy_factory.VAE.standard_vae import StandardVAE
+        from nesy_factory.VAE.beta_vae import BetaVAE
+        from nesy_factory.VAE.conditional_vae import ConditionalVAE
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
@@ -31,44 +33,52 @@ implementation:
 
         config = json.loads(args.config)
 
-        # Build LSTM model configuration
+        print(f"Received config: {json.dumps(config, indent=2)}")
+
+        # Use processed_input_dim if available (after one-hot encoding), otherwise feature count
+        if 'processed_input_dim' in config:
+            input_dim = config['processed_input_dim']
+        elif 'input_dim' in config:
+            input_dim = config['input_dim']
+        else:
+            input_dim = len(config['feature_columns'])
+        
+        print(f"Using input_dim: {input_dim}")
+
         model_config = {
-            'input_dim': len(config['feature_columns']),
+            'input_dim': input_dim,
+            'latent_dim': config['latent_dim'],
             'hidden_dim': config['hidden_dim'],
-            'output_dim': 1,
             'num_layers': config['num_layers'],
             'dropout': config['dropout'],
             'optimizer': 'adam',
             'learning_rate': config['learning_rate'],
             'epochs': config['epochs'],
-            'loss_function': config['loss_function']
+            'loss_function': 'ELBO'
         }
 
-        # Initialize LSTM model
-        print(f"Initializing LSTM model with config: {model_config}")
-        model_obj = LSTM(model_config)
-        
-        # Count parameters
-        total_params = sum(p.numel() for p in model_obj.parameters())
-        trainable_params = sum(p.numel() for p in model_obj.parameters() if p.requires_grad)
-        
-        print(f"LSTM Model initialized successfully")
-        print(f"  - Input Dimension: {model_config['input_dim']}")
-        print(f"  - Hidden Dimension: {model_config['hidden_dim']}")
-        print(f"  - Output Dimension: {model_config['output_dim']}")
-        print(f"  - Number of Layers: {model_config['num_layers']}")
-        print(f"  - Dropout: {model_config['dropout']}")
-        print(f"  - Total Parameters: {total_params:,}")
-        print(f"  - Trainable Parameters: {trainable_params:,}")
+        model_type = config.get('model_type', 'StandardVAE')
+        print(f"Model type: '{model_type}'")
 
-        # Save model to output path
+        if model_type in ['StandardVAE', 'VAE', 'standard_vae', 'vae']:
+            model_obj = StandardVAE(model_config)
+            print("Initialized StandardVAE")
+        elif model_type in ['BetaVAE', 'beta_vae']:
+            model_obj = BetaVAE(model_config)
+            print("Initialized BetaVAE")
+        elif model_type in ['ConditionalVAE', 'conditional_vae', 'CVAE']:
+            model_obj = ConditionalVAE(model_config)
+            print("Initialized ConditionalVAE")
+        else:
+            raise ValueError(f"Invalid model type '{model_type}'. Use: StandardVAE, BetaVAE, or ConditionalVAE")
+
         os.makedirs(os.path.dirname(args.model), exist_ok=True)
         with open(args.model, "wb") as f:
             pickle.dump(model_obj, f)
 
-        print(f" Saved LSTM model to {args.model}")
-      args:
-        - --config
-        - {inputValue: config}
-        - --model
-        - {outputPath: model}
+        print(f"Saved model to {args.model}")
+    args:
+      - --config
+      - {inputValue: config}
+      - --model
+      - {outputPath: model}
