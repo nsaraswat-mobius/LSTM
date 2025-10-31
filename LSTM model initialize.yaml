@@ -1,5 +1,5 @@
 name: Initialize LSTM Model
-description: Initializes the LSTM model for time series forecasting.
+description: Initializes the LSTM model.
 inputs:
   - {name: config, type: String}
 outputs:
@@ -22,27 +22,8 @@ implementation:
         import pickle
         import sys
         
-        # Debug: Print Python path and try to locate the module
-        print("Python sys.path:")
-        for p in sys.path:
-            print(f"  {p}")
         
-        print("Attempting to import LSTM...")
-        
-        try:
-            from nesy_factory.RNNs.lstm import LSTM
-            print("Successfully imported LSTM from nesy_factory.RNNs.lstm")
-        except ImportError as e:
-            print(f"Import failed: {e}")
-            print("Trying alternative import...")
-            try:
-                import nesy_factory
-                print(f"nesy_factory location: {nesy_factory.__file__}")
-                from nesy_factory.RNNs.lstm import LSTM
-                print("Successfully imported LSTM")
-            except Exception as e2:
-                print(f"Alternative import also failed: {e2}")
-                raise
+        from nesy_factory.RNNs.lstm import LSTM
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
@@ -50,22 +31,9 @@ implementation:
         args = parser.parse_args()
 
         config = json.loads(args.config)
-        
-        print(f"Received config: {json.dumps(config, indent=2)}")
 
-        # Determine input dimension
-        if 'processed_input_dim' in config:
-            input_dim = config['processed_input_dim']
-            print(f"Using input_dim from processed_input_dim: {input_dim}")
-        elif 'feature_columns' in config:
-            input_dim = len(config['feature_columns'])
-            print(f"Using input_dim from feature_columns length: {input_dim}")
-        else:
-            raise ValueError("Config must contain either 'processed_input_dim' or 'feature_columns'")
-
-        # Build LSTM model configuration
         model_config = {
-            'input_dim': input_dim,
+            'input_dim': len(config['feature_columns']),
             'hidden_dim': config['hidden_dim'],
             'output_dim': 1,
             'num_layers': config['num_layers'],
@@ -73,32 +41,16 @@ implementation:
             'optimizer': 'adam',
             'learning_rate': config['learning_rate'],
             'epochs': config['epochs'],
-            'loss_function': config.get('loss_function', 'mseloss').lower()
+            'loss_function': config['loss_function']
         }
 
-        # Initialize LSTM model
-        print(f"Initializing LSTM model with config: {model_config}")
         model_obj = LSTM(model_config)
-        
-        # Count parameters
-        total_params = sum(p.numel() for p in model_obj.parameters())
-        trainable_params = sum(p.numel() for p in model_obj.parameters() if p.requires_grad)
-        
-        print(f"LSTM Model initialized successfully")
-        print(f"  - Input Dimension: {model_config['input_dim']}")
-        print(f"  - Hidden Dimension: {model_config['hidden_dim']}")
-        print(f"  - Output Dimension: {model_config['output_dim']}")
-        print(f"  - Number of Layers: {model_config['num_layers']}")
-        print(f"  - Dropout: {model_config['dropout']}")
-        print(f"  - Total Parameters: {total_params:,}")
-        print(f"  - Trainable Parameters: {trainable_params:,}")
 
-        # Save model to output path
         os.makedirs(os.path.dirname(args.model), exist_ok=True)
         with open(args.model, "wb") as f:
             pickle.dump(model_obj, f)
 
-        print(f" Saved LSTM model to {args.model}")
+        print(f"Saved LSTM model to {args.model}")
     args:
       - --config
       - {inputValue: config}
