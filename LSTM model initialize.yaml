@@ -22,10 +22,27 @@ implementation:
         import pickle
         import sys
         
-        # Add src to path if needed
-        sys.path.insert(0, '/usr/local/lib/python3.10/site-packages')
+        # Debug: Print Python path and try to locate the module
+        print("Python sys.path:")
+        for p in sys.path:
+            print(f"  {p}")
         
-        from nesy_factory.RNNs.lstm import LSTM
+        print("\nAttempting to import LSTM...")
+        
+        try:
+            from nesy_factory.RNNs.lstm import LSTM
+            print(" Successfully imported LSTM from nesy_factory.RNNs.lstm")
+        except ImportError as e:
+            print(f" Import failed: {e}")
+            print("\nTrying alternative import...")
+            try:
+                import nesy_factory
+                print(f"nesy_factory location: {nesy_factory.__file__}")
+                from nesy_factory.RNNs.lstm import LSTM
+                print(" Successfully imported LSTM")
+            except Exception as e2:
+                print(f" Alternative import also failed: {e2}")
+                raise
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
