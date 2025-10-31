@@ -22,7 +22,10 @@ implementation:
         import pickle
         import sys
         
-        from nesy_factory.RNNs.lstm import LSTM
+        try:
+            from nesy_factory.RNNs import LSTM
+        except ImportError:
+            from nesy_factory.RNNs.lstm import LSTM
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
