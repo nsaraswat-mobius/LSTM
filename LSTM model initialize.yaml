@@ -55,4 +55,4 @@ implementation:
       - --config
       - {inputValue: config}
       - --model
-      - {outputPath: model}
+      - {outputPath: Model}
