@@ -1,0 +1,92 @@
+name: Train LSTM Model
+description: Trains the LSTM model.
+inputs:
+  - {name: model, type: Model}
+  - {name: train_loader, type: Dataset}
+  - {name: config, type: String}
+outputs:
+  - {name: trained_model, type: Model}
+  - {name: epoch_loss, type: String}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v24
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        import torch
+        
+        from nesy_factory.RNNs import LSTM
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--model', type=str, required=True)
+        parser.add_argument('--train_loader', type=str, required=True)
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--trained_model', type=str, required=True)
+        parser.add_argument('--epoch_loss', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        with open(args.model, 'rb') as f:
+            model_obj = pickle.load(f)
+
+        with open(args.train_loader, 'rb') as f:
+            train_loader_obj = pickle.load(f)
+
+        print("Starting LSTM Model Training")
+        epoch_loss_data = []
+
+        epochs = config.get('epochs', 10)
+        
+        for epoch in range(epochs):
+            model_obj.train()
+            total_train_loss = 0
+            batch_count = 0
+            
+            for inputs, labels in train_loader_obj:
+                loss = model_obj.train_step((inputs, labels))
+                total_train_loss += loss
+                batch_count += 1
+            
+            avg_epoch_loss = total_train_loss / batch_count
+            epoch_loss_data.append({
+                'epoch': epoch + 1,
+                'loss': float(avg_epoch_loss)
+            })
+            
+            print(f"Epoch [{epoch+1}/{epochs}] - Average Loss: {avg_epoch_loss:.6f}")
+
+        print("LSTM Model Training Completed")
+
+        os.makedirs(os.path.dirname(args.trained_model), exist_ok=True)
+        with open(args.trained_model, 'wb') as f:
+            pickle.dump(model_obj, f)
+
+        os.makedirs(os.path.dirname(args.epoch_loss), exist_ok=True)
+        with open(args.epoch_loss, 'w') as f:
+            json.dump(epoch_loss_data, f, indent=2)
+
+        print(f"Saved trained LSTM model to {args.trained_model}")
+        print(f"Saved epoch loss data to {args.epoch_loss}")
+    args:
+      - --model
+      - {inputValue: model}
+      - --train_loader
+      - {inputValue: train_loader}
+      - --config
+      - {inputValue: config}
+      - --trained_model
+      - {outputPath: trained_model}
+      - --epoch_loss
+      - {outputPath: epoch_loss}
