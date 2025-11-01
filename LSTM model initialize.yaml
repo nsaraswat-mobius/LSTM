@@ -23,7 +23,7 @@ implementation:
         import sys
         
         
-        from nesy_factory.RNNs.lstm import LSTM
+        from nesy_factory.RNNs import LSTM
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
