@@ -1,12 +1,12 @@
-name: Initialize Model
-description: Initializes the RNN model.
+name: Initialize LSTM Model
+description: Initializes the LSTM model.
 inputs:
   - {name: config, type: String}
 outputs:
   - {name: model, type: Model}
 implementation:
   container:
-    image: kushagra4761/nesy-factory-library
+    image: gurpreetgandhi/nesy-factory:v25
     command:
       - sh
       - -c
@@ -23,8 +23,7 @@ implementation:
         import sys
         
         
-        from nesy_factory.RNNs.simple_rnn import SimpleRNN
-        from nesy_factory.RNNs.gru import GRU
+        from nesy_factory.RNNs import LSTM
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--config', type=str, required=True)
@@ -45,18 +44,13 @@ implementation:
             'loss_function': config['loss_function']
         }
 
-        if config['model_type'] == 'SimpleRNN':
-            model_obj = SimpleRNN(model_config)
-        elif config['model_type'] == 'GRU':
-            model_obj = GRU(model_config)
-        else:
-            raise ValueError("Invalid model type specified")
+        model_obj = LSTM(model_config)
 
         os.makedirs(os.path.dirname(args.model), exist_ok=True)
         with open(args.model, "wb") as f:
             pickle.dump(model_obj, f)
 
-        print(f"Saved model to {args.model}")
+        print(f"Saved LSTM model to {args.model}")
     args:
       - --config
       - {inputValue: config}
