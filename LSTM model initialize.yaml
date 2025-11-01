@@ -6,7 +6,7 @@ outputs:
   - {name: model, type: Model}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v25
+    image: kushagra4761/nesy-factory-library
     command:
       - sh
       - -c
