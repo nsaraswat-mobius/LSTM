@@ -1,7 +1,7 @@
 name: Train LSTM Model
 description: Trains the LSTM model.
 inputs:
-  - {name: model, type: Model}
+  - {name: model, type: model}
   - {name: train_loader, type: Dataset}
   - {name: config, type: String}
 outputs:
