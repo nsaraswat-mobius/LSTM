@@ -69,11 +69,15 @@ implementation:
 
         print("LSTM Model Training Completed")
 
-        os.makedirs(os.path.dirname(args.trained_model), exist_ok=True)
+        output_dir_trained_model = os.path.dirname(args.trained_model)
+        if output_dir_trained_model and not os.path.exists(output_dir_trained_model):
+            os.makedirs(output_dir_trained_model, exist_ok=True)
         with open(args.trained_model, 'wb') as f:
             pickle.dump(model_obj, f)
 
-        os.makedirs(os.path.dirname(args.epoch_loss), exist_ok=True)
+        output_dir_epoch_loss = os.path.dirname(args.epoch_loss)
+        if output_dir_epoch_loss and not os.path.exists(output_dir_epoch_loss):
+            os.makedirs(output_dir_epoch_loss, exist_ok=True)
         with open(args.epoch_loss, 'w') as f:
             json.dump(epoch_loss_data, f, indent=2)
 
