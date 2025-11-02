@@ -3,7 +3,7 @@ description: Initializes the LSTM model.
 inputs:
   - {name: config, type: String}
 outputs:
-  - {name: model, type: Model}
+  - {name: model, type:model}
 implementation:
   container:
     image: gurpreetgandhi/nesy-factory:v25
@@ -55,4 +55,4 @@ implementation:
       - --config
       - {inputValue: config}
       - --model
-      - {outputPath: Model}
+      - {outputPath: model}
