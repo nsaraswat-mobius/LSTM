@@ -9,7 +9,7 @@ outputs:
   - {name: eval_metrics_json, type: String}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v25
+    image: gurpreetgandhi/nesy-factory:v24
     command:
       - sh
       - -c
@@ -42,20 +42,8 @@ implementation:
         with open(args.test_loader, 'rb') as f:
             test_loader_obj = pickle.load(f)
 
-        model_config = {
-            'input_dim': len(config['feature_columns']),
-            'hidden_dim': config['hidden_dim'],
-            'output_dim': 1,
-            'num_layers': config['num_layers'],
-            'dropout': config['dropout'],
-            'optimizer': 'adam',
-            'learning_rate': config['learning_rate'],
-            'epochs': config['epochs'],
-            'loss_function': config['loss_function']
-        }
-
-        model_obj = LSTM(model_config)
-        model_obj.load_state_dict(torch.load(args.trained_model))
+        with open(args.trained_model, 'rb') as f:
+            model_obj = pickle.load(f)
 
         print("Starting LSTM Model Evaluation")
         metrics = model_obj.eval_step(test_loader_obj)
