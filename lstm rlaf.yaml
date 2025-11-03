@@ -339,8 +339,33 @@ implementation:
             print(f"Get instance request URL: {url}, Headers: {headers}, Payload: {payload}")
             response = http.post(url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
-            print(f"Get instance. Status Code: {response.status_code}, Full response: {response.json()}")
-            return response.json()['content'][0]
+            response_data = response.json()
+            print(f"Get instance. Status Code: {response.status_code}, Full response: {response_data}")
+            
+            # Check if content exists and has at least one instance
+            if 'content' not in response_data or not response_data['content']:
+                raise ValueError(f"No instances found for model_id: {model_id}. Response: {response_data}")
+            
+            return response_data['content'][0]
+
+        def create_instance(access_token, domain, schema_id, model_id):
+            http = get_retry_session()
+            url = f"{domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances"
+            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+            payload = {
+                "dbType": "TIDB",
+                "instances": [{
+                    "model_id": model_id,
+                    "pierce2rlaf": [],
+                    "rlaf2pierce": [],
+                    "rlaf_actions": {"actions": []}
+                }]
+            }
+            print(f"Create instance request - URL: {url}, Headers: {headers}")
+            response = http.post(url, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            print(f"Create instance. Status Code: {response.status_code}")
+            return response.json()
 
         def update_instance_field(access_token, domain, schema_id, model_id, field, value):
             http = get_retry_session()
@@ -469,8 +494,29 @@ implementation:
                 
                 print(f"Dynamically generated param_json for DQN: {json.dumps(dqn_params)}")
 
-                instance = get_instance(access_token, args.domain, args.schema_id, args.model_id)
-                print(f"{instance}")
+                # Get instance with error handling
+                try:
+                    instance = get_instance(access_token, args.domain, args.schema_id, args.model_id)
+                    print(f"Retrieved instance: {instance}")
+                except ValueError as e:
+                    print(f"Error retrieving instance: {e}")
+                    print("Creating initial instance structure...")
+                    
+                    # Create a default instance structure
+                    instance = {
+                        'pierce2rlaf': [],
+                        'rlaf2pierce': [],
+                        'rlaf_actions': {'actions': []}
+                    }
+                    
+                    # Try to create the instance if it doesn't exist
+                    try:
+                        create_instance(access_token, args.domain, args.schema_id, args.model_id)
+                        print("Created new instance for model_id")
+                    except Exception as create_error:
+                        print(f"Warning: Could not create instance: {create_error}")
+                        print("Using default instance structure for this run")
+
                 if instance.get('pierce2rlaf'):
                     latest_pierce2rlaf = instance['pierce2rlaf'][-1]
                     previous_state = latest_pierce2rlaf['current_state']
@@ -485,7 +531,10 @@ implementation:
                 }
                 pierce2rlaf_history = instance.get("pierce2rlaf", [])
                 pierce2rlaf_history.append(new_pierce2rlaf_entry)
-                update_instance_field(access_token, args.domain, args.schema_id, args.model_id, "pierce2rlaf", pierce2rlaf_history)
+                
+                # Only update if we have a real instance
+                if 'model_id' in instance:
+                    update_instance_field(access_token, args.domain, args.schema_id, args.model_id, "pierce2rlaf", pierce2rlaf_history)
 
                 dqn_config = {
                     "pipeline_id": args.dqn_pipeline_id, "experiment_id": args.dqn_experiment_id, "access_token": access_token
@@ -493,7 +542,13 @@ implementation:
                 print(f"{dqn_config}")
                 trigger_and_wait_for_dqn_pipeline(dqn_config, args.pipeline_domain, args.model_id, dqn_params)
 
-                updated_instance = get_instance(access_token, args.domain, args.schema_id, args.model_id)
+                # Get updated instance
+                try:
+                    updated_instance = get_instance(access_token, args.domain, args.schema_id, args.model_id)
+                except ValueError as e:
+                    print(f"Error retrieving updated instance: {e}")
+                    print("Exiting LSTM RLAF loop.")
+                    break
                 
                 if 'rlaf2pierce' not in updated_instance or len(updated_instance['rlaf2pierce']) == 0:
                     print("No rlaf2pierce data found. Exiting LSTM RLAF loop.")
@@ -504,24 +559,40 @@ implementation:
                 if not latest_rlaf2pierce.get("pierce_or_not", True):
                     print("pierce_or_not is false. Exiting LSTM RLAF loop.")
                     break
+                
                 print(f"{latest_rlaf2pierce}")
                 rlaf_actions = updated_instance.get('rlaf_actions', {}).get('actions', [])
                 action_id_for_next_pierce = latest_rlaf2pierce['action_id']
                 action_details = next((a for a in rlaf_actions if a["id"] == action_id_for_next_pierce), None)
                 if not action_details:
-                    raise ValueError(f"Action with ID {action_id_for_next_pierce} not found in rlaf_actions")
+                    print(f"Warning: Action with ID {action_id_for_next_pierce} not found in rlaf_actions")
+                    break
  
                 print(f"DQN pipeline recommended action for LSTM: {action_details}. Retraining model.")
                 retraining_results = model_retraining(
                     action_details['params'], args.trained_model, args.data_path, json.loads(args.config), args.tasks,
                     args.retrained_model, previous_state, dqn_params
                 )
+
+                # Ensure output directory exists and file is created
+                os.makedirs(os.path.dirname(args.retrained_model), exist_ok=True)
+                if not os.path.exists(args.retrained_model):
+                    # Create a placeholder file if model wasn't saved due to no improvement
+                    with open(args.retrained_model, 'w') as f:
+                        f.write("no_improvement")
+
                 current_metrics = retraining_results["metrics"]
 
+            # Ensure output directory exists
             os.makedirs(os.path.dirname(args.rlaf_output), exist_ok=True)
             with open(args.rlaf_output, 'w') as f:
                 json.dump({"final_metrics": current_metrics}, f, indent=4)
             print(f"LSTM RLAF loop finished. Final parameters written to {args.rlaf_output}")
+
+            # Also ensure retrained_model output exists if not created
+            if not os.path.exists(args.retrained_model):
+                with open(args.retrained_model, 'w') as f:
+                    f.write("no_improvement_final")
 
         if __name__ == '__main__':
             main()
