@@ -18,7 +18,7 @@ outputs:
   - {name: retrained_model, type: Model}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v25
+    image: kushagra4761/nesy-factory-library
     command:
       - sh
       - -c
@@ -494,6 +494,11 @@ implementation:
                 trigger_and_wait_for_dqn_pipeline(dqn_config, args.pipeline_domain, args.model_id, dqn_params)
 
                 updated_instance = get_instance(access_token, args.domain, args.schema_id, args.model_id)
+                
+                if 'rlaf2pierce' not in updated_instance or len(updated_instance['rlaf2pierce']) == 0:
+                    print("No rlaf2pierce data found. Exiting LSTM RLAF loop.")
+                    break
+                
                 latest_rlaf2pierce = updated_instance['rlaf2pierce'][-1]
                 
                 if not latest_rlaf2pierce.get("pierce_or_not", True):
