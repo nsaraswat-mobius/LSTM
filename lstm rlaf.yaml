@@ -404,20 +404,13 @@ implementation:
             
             config.update(action)
             
-            model_config = {
-                'input_dim': len(config['feature_columns']),
-                'hidden_dim': config['hidden_dim'],
-                'output_dim': 1,
-                'num_layers': config['num_layers'],
-                'dropout': config['dropout'],
-                'optimizer': 'adam',
-                'learning_rate': config['learning_rate'],
-                'epochs': config['epochs'],
-                'loss_function': config['loss_function']
-            }
-
-            model = LSTM(model_config)
-            model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+            with open(model_path, 'rb') as f:
+                model = pickle.load(f)
+            
+            model.config['dropout'] = config['dropout']
+            model.config['learning_rate'] = config['learning_rate']
+            model.dropout = config['dropout']
+            model.learning_rate = config['learning_rate']
             model._init_optimizer_and_criterion()
 
             print("Starting LSTM continual learning experiments")
@@ -441,7 +434,8 @@ implementation:
                 print(f"LSTM metrics improved (score: {improvement_score:.4f}). Saving model.")
                 os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
                 final_model = results['naive']['final_model']
-                torch.save(final_model.state_dict(), output_model_path)
+                with open(output_model_path, 'wb') as f:
+                    pickle.dump(final_model, f)
                 print(f"Saved retrained LSTM model to {output_model_path}")
             else:
                 print(f"No improvement in LSTM metrics (score: {improvement_score:.4f}). Model not saved.")
