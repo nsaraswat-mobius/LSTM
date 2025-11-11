@@ -77,7 +77,7 @@ outputs:
   
 implementation:
   container:
-    image: sanram00/lstm-image:v1
+    image: sanram00/lstm-image:v2
     command:
       - python3
       - -u
