@@ -277,9 +277,9 @@ implementation:
                             "containers": [
                                 {
                                     "name": "training-container",
-                                    "image": "sanram00/lstm-image:v1",
+                                    "image": "sanram00/lstm-image:v2",
                                     "command": ["python3"],
-                                    "args": ["train_vae.py"] + trial_args,
+                                    "args": ["hyperlstm.py"] + trial_args,
                                     "resources": {
                                         "limits": {"cpu": "2", "memory": "4Gi"}
                                     }
