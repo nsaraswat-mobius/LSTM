@@ -83,7 +83,7 @@ implementation:
             config = json.loads(args.config_str)
             if isinstance(config, str):
                 config = json.loads(config)
-            print(f"📋 Config: {config}")
+            print(f" Config: {config}")
             
             # Create model config
             model_config = {
