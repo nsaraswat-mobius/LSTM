@@ -98,7 +98,7 @@ implementation:
                 'loss_function': config.get('loss_function', 'mse')
             }
             
-            print(f"\n Model Configuration:")
+            print(f"\\n Model Configuration:")
             print(f"  Input dim: {model_config['input_dim']}")
             print(f"  Hidden dim: {model_config['hidden_dim']}")
             print(f"  Output dim: {model_config['output_dim']}")
@@ -106,18 +106,18 @@ implementation:
             print(f"  Dropout: {model_config['dropout']}")
 
             # Initialize LSTM model
-            print("\n  Initializing LSTM model...")
+            print("\\n  Initializing LSTM model")
             model = LSTM(model_config)
             
             # Load trained weights
-            print("\n  Loading model weights...")
+            print("\\n  Loading model weights")
             state_dict = load_model_weights(args.weights_url)
             model.load_state_dict(state_dict)
             model.eval()
             print(" Model weights loaded successfully")
 
             # Load input data
-            print(f"\n Loading input data from: {args.input_pickle}")
+            print(f"\\n Loading input data from: {args.input_pickle}")
             with open(args.input_pickle, 'rb') as f:
                 input_list = pickle.load(f)
             
@@ -147,7 +147,7 @@ implementation:
                 )
 
             # Perform inference
-            print("\n Performing inference...")
+            print("\\n Performing inference")
             with torch.no_grad():
                 output = model(input_tensor)
             
@@ -173,7 +173,7 @@ implementation:
             with open(args.output_json, 'w') as f:
                 json.dump(result, f, indent=2)
             
-            print(f"\n Inference completed! Results saved to: {args.output_json}")
+            print(f"\\n Inference completed! Results saved to: {args.output_json}")
 
         if __name__ == '__main__':
             main()
