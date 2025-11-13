@@ -1,0 +1,48 @@
+name: Process LSTM Input
+description: Processes a string input into a pickled object for LSTM inference. Expects time-series data with shape (batch, seq_length, features).
+inputs:
+  - {name: inp_string, type: String, description: The input string 
+outputs:
+  - {name: inp_pickle, type: Dataset}
+implementation:
+  container:
+    image: python:3.9
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import pickle
+        import os
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--inp_string', type=str, required=True)
+        parser.add_argument('--inp_pickle', type=str, required=True)
+        args = parser.parse_args()
+
+        # The input string is expected to be a JSON-formatted list of lists (3D array)
+        # Format: [batch_size, sequence_length, num_features]
+        data = json.loads(args.inp_string)
+        
+        print(f"Input data shape: {len(data)} batches")
+        if len(data) > 0:
+            print(f"  Sequence length: {len(data[0])}")
+            if len(data[0]) > 0:
+                print(f"  Features per timestep: {len(data[0][0])}")
+        
+        os.makedirs(os.path.dirname(args.inp_pickle), exist_ok=True)
+        with open(args.inp_pickle, "wb") as f:
+            pickle.dump(data, f)
+
+        print(f" Processed and saved pickled data to {args.inp_pickle}")
+    args:
+      - --inp_string
+      - {inputValue: inp_string}
+      - --inp_pickle
+      - {outputPath: inp_pickle}
