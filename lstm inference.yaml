@@ -1,0 +1,188 @@
+name: LSTM Inference
+description: Performs inference using a trained LSTM model. Predicts the next value in the sequence based on input time-series data.
+inputs:
+  - {name: input_pickle, type: Dataset, description: 'Pickled input data (batch x seq_length x features)'}
+  - {name: config_str, type: String, description: 'LSTM model configuration as JSON string'}
+  - {name: weights_url, type: String, description: 'URL to download the trained LSTM model weights (.pth file)'}
+outputs:
+  - {name: output_json, type: String, description: 'Prediction results as JSON'}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v25
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import torch
+        import torch.nn as nn
+        import numpy as np
+        import requests
+        import io
+        import pickle
+        import ast
+        import os
+
+        # Define LSTM Model (must match training architecture)
+        class LSTM(nn.Module):
+            def __init__(self, config):
+                super(LSTM, self).__init__()
+                
+                self.input_dim = config['input_dim']
+                self.hidden_dim = config['hidden_dim']
+                self.output_dim = config['output_dim']
+                self.num_layers = config['num_layers']
+                self.dropout = config.get('dropout', 0.2)
+                
+                # LSTM layers
+                self.lstm = nn.LSTM(
+                    input_size=self.input_dim,
+                    hidden_size=self.hidden_dim,
+                    num_layers=self.num_layers,
+                    dropout=self.dropout if self.num_layers > 1 else 0,
+                    batch_first=True
+                )
+                
+                # Output layer
+                self.fc = nn.Linear(self.hidden_dim, self.output_dim)
+            
+            def forward(self, x):
+                # LSTM forward pass
+                lstm_out, (h_n, c_n) = self.lstm(x)
+                
+                # Take the output from the last time step
+                out = lstm_out[:, -1, :]
+                
+                # Pass through output layer
+                out = self.fc(out)
+                
+                return out
+
+        def load_model_weights(url):
+            print(f"Downloading model weights from: {url}")
+            response = requests.get(url)
+            response.raise_for_status()
+            buffer = io.BytesIO(response.content)
+            return torch.load(buffer, map_location=torch.device('cpu'))
+
+        def main():
+            parser = argparse.ArgumentParser()
+            parser.add_argument('--input_pickle', type=str, required=True)
+            parser.add_argument('--config_str', type=str, required=True)
+            parser.add_argument('--weights_url', type=str, required=True)
+            parser.add_argument('--output_json', type=str, required=True)
+            args = parser.parse_args()
+
+            # Parse config
+            config = json.loads(args.config_str)
+            if isinstance(config, str):
+                config = json.loads(config)
+            print(f"📋 Config: {config}")
+            
+            # Create model config
+            model_config = {
+                'input_dim': len(config['feature_columns']),
+                'hidden_dim': config['hidden_dim'],
+                'output_dim': config.get('output_dim', 1),
+                'num_layers': config['num_layers'],
+                'dropout': config.get('dropout', 0.2),
+                'optimizer': config.get('optimizer', 'adam'),
+                'learning_rate': config.get('learning_rate', 0.001),
+                'epochs': config.get('epochs', 10),
+                'loss_function': config.get('loss_function', 'mse')
+            }
+            
+            print(f"\n Model Configuration:")
+            print(f"  Input dim: {model_config['input_dim']}")
+            print(f"  Hidden dim: {model_config['hidden_dim']}")
+            print(f"  Output dim: {model_config['output_dim']}")
+            print(f"  Num layers: {model_config['num_layers']}")
+            print(f"  Dropout: {model_config['dropout']}")
+
+            # Initialize LSTM model
+            print("\n  Initializing LSTM model...")
+            model = LSTM(model_config)
+            
+            # Load trained weights
+            print("\n  Loading model weights...")
+            state_dict = load_model_weights(args.weights_url)
+            model.load_state_dict(state_dict)
+            model.eval()
+            print(" Model weights loaded successfully")
+
+            # Load input data
+            print(f"\n Loading input data from: {args.input_pickle}")
+            with open(args.input_pickle, 'rb') as f:
+                input_list = pickle.load(f)
+            
+            print(f"Input type: {type(input_list)}")
+            
+            # Handle string input (if needed)
+            if isinstance(input_list, str):
+                input_list = ast.literal_eval(input_list)
+            
+            # Convert to tensor
+            input_tensor = torch.tensor(input_list, dtype=torch.float32)
+            print(f"Input tensor shape: {input_tensor.shape}")
+            
+            # Ensure 3D input: (batch_size, seq_length, features)
+            if input_tensor.dim() == 2:
+                input_tensor = input_tensor.unsqueeze(0)
+                print(f"Reshaped input to: {input_tensor.shape}")
+            
+            # Validate input dimensions
+            expected_features = model_config['input_dim']
+            actual_features = input_tensor.shape[2]
+            if actual_features != expected_features:
+                raise ValueError(
+                    f"Input feature dimension mismatch! "
+                    f"Expected {expected_features} features, got {actual_features}. "
+                    f"Make sure your input matches the model's feature_columns."
+                )
+
+            # Perform inference
+            print("\n Performing inference...")
+            with torch.no_grad():
+                output = model(input_tensor)
+            
+            print(f"Output shape: {output.shape}")
+            print(f"Prediction: {output.numpy().tolist()}")
+            
+            # Prepare result
+            result = {
+                "prediction": output.numpy().tolist(),
+                "input_shape": list(input_tensor.shape),
+                "model_config": {
+                    "input_dim": model_config['input_dim'],
+                    "hidden_dim": model_config['hidden_dim'],
+                    "num_layers": model_config['num_layers']
+                }
+            }
+            
+            # Save output
+            output_dir = os.path.dirname(args.output_json)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+            
+            with open(args.output_json, 'w') as f:
+                json.dump(result, f, indent=2)
+            
+            print(f"\n Inference completed! Results saved to: {args.output_json}")
+
+        if __name__ == '__main__':
+            main()
+    args:
+      - --input_pickle
+      - {inputPath: input_pickle}
+      - --config_str
+      - {inputValue: config_str}
+      - --weights_url
+      - {inputValue: weights_url}
+      - --output_json
+      - {outputPath: output_json}
