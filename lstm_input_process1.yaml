@@ -1,7 +1,7 @@
 name: Process LSTM Input
 description: Processes a string input into a pickled object for LSTM inference. Expects time-series data with shape (batch, seq_length, features).
 inputs:
-  - {name: inp_string, type: String, description: The input string 
+  - {name: inp_string, type: String, description: 'The input string (e.g., "[0.1,0.2,0.3,0.4,0.5,0.6]") to be processed.'} 
 outputs:
   - {name: inp_pickle, type: Dataset}
 implementation:
