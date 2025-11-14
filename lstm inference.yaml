@@ -111,7 +111,7 @@ implementation:
                         try:
                             # Method 4: Python literal eval with unescaping
                             import ast as _ast
-                            unescaped_for_ast = raw_cfg.replace('\\"', '"').replace('\\\\', '\\')
+                            unescaped_for_ast = raw_cfg.replace('\\"', '"')
                             config = _ast.literal_eval(unescaped_for_ast)
                             print("Parsed config with ast.literal_eval after unescaping")
                         except Exception as e_ast:
