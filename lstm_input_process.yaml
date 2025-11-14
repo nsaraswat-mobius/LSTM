@@ -1,12 +1,12 @@
-name: Process LSTM Input
-description: Processes a string input into a pickled object for LSTM inference. Expects time-series data with shape (batch, seq_length, features).
+name: Process Input for LSTM Factory
+description: Processes string input into the format expected by nesy_factory LSTM model
 inputs:
-  - {name: inp_string, type: String, description: 'The input string (e.g., "[0.1,0.2,0.3,0.4,0.5,0.6]") to be processed.'}
+  - {name: input_string, type: String, description: 'Input string containing time-series data'}
 outputs:
-  - {name: inp_pickle, type: Dataset}
+  - {name: processed_data, type: Dataset, description: 'Processed input data (pickled)'}
 implementation:
   container:
-    image: python:3.9
+    image: gurpreetgandhi/nesy-factory:v25
     command:
       - sh
       - -c
@@ -18,31 +18,78 @@ implementation:
       - |
         import argparse
         import json
-        import pickle
         import os
+        import pickle
+        import torch
+        import numpy as np
 
         parser = argparse.ArgumentParser()
-        parser.add_argument('--inp_string', type=str, required=True)
-        parser.add_argument('--inp_pickle', type=str, required=True)
+        parser.add_argument('--input_string', type=str, required=True)
+        parser.add_argument('--processed_data', type=str, required=True)
         args = parser.parse_args()
 
-        # The input string is expected to be a JSON-formatted list of lists (3D array)
-        # Format: [batch_size, sequence_length, num_features]
-        data = json.loads(args.inp_string)
-        
-        print(f"Input data shape: {len(data)} batches")
-        if len(data) > 0:
-            print(f"  Sequence length: {len(data[0])}")
-            if len(data[0]) > 0:
-                print(f"  Features per timestep: {len(data[0][0])}")
-        
-        os.makedirs(os.path.dirname(args.inp_pickle), exist_ok=True)
-        with open(args.inp_pickle, "wb") as f:
-            pickle.dump(data, f)
+    # Robust parsing of input string (accept JSON or Python list, strip outer quotes)
+    print("Processing input string")
+    raw = args.input_string
+    print(f"Raw input string repr: {repr(raw)}")
+    # Remove surrounding whitespace
+    raw_str = raw.strip()
 
-        print(f" Processed and saved pickled data to {args.inp_pickle}")
+    # If the entire payload is wrapped in extra quotes ("..." or '...'), strip them
+    if len(raw_str) >= 2 and ((raw_str[0] == '"' and raw_str[-1] == '"') or (raw_str[0] == "'" and raw_str[-1] == "'")):
+      print("Detected outer quotes around input; stripping them")
+      raw_str = raw_str[1:-1]
+
+    # Try JSON parsing first
+    try:
+      data = json.loads(raw_str)
+    except json.JSONDecodeError as json_err:
+      print(f"JSON decode failed: {json_err}")
+      # Try Python literal_eval for inputs that look like Python lists
+      try:
+        import ast
+        data = ast.literal_eval(raw_str)
+        print("Parsed input using ast.literal_eval (Python syntax)")
+      except Exception as ast_err:
+        print(f"literal_eval also failed: {ast_err}")
+        print("--- BEGIN RAW INPUT ---")
+        print(raw)
+        print("---  END RAW INPUT  ---")
+        # Re-raise the original JSON error for clarity
+        raise json_err
+        
+        print(f"Input data type: {type(data)}")
+        print(f"Input data length: {len(data)}")
+        
+        if len(data) > 0:
+            print(f"Sequence length: {len(data[0])}")
+            if len(data[0]) > 0:
+                print(f"Features per timestep: {len(data[0][0])}")
+
+    # Convert to tensor format that nesy_factory expects
+    # The factory library typically expects torch tensors
+    try:
+      input_tensor = torch.tensor(data, dtype=torch.float32)
+    except Exception as e:
+      print(f"Failed to convert parsed data to tensor: {e}")
+      print(f"Parsed data type: {type(data)}")
+      raise
+        
+        print(f"Converted to tensor shape: {input_tensor.shape}")
+        
+        # Create output directory
+        output_dir = os.path.dirname(args.processed_data)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        # Save as pickle (format expected by factory library)
+        with open(args.processed_data, 'wb') as f:
+            pickle.dump(input_tensor, f)
+
+        print(f"Saved processed data to {args.processed_data}")
+        print(" Input processing completed")
     args:
-      - --inp_string
-      - {inputValue: inp_string}
-      - --inp_pickle
-      - {outputPath: inp_pickle}
+      - --input_string
+      - {inputValue: input_string}
+      - --processed_data
+      - {outputPath: processed_data}
