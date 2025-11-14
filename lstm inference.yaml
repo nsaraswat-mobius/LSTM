@@ -79,10 +79,44 @@ implementation:
             parser.add_argument('--output_json', type=str, required=True)
             args = parser.parse_args()
 
-            # Parse config
-            config = json.loads(args.config_str)
+            # Parse config (robust: accept JSON string, JSON-within-string, or Python dict syntax)
+            raw_cfg = args.config_str
+            print(f"Raw config_str repr: {repr(raw_cfg)}")
+            config = None
+            # Try JSON parsing first
+            try:
+                config = json.loads(raw_cfg)
+                print("Parsed config with json.loads")
+            except Exception as e_json:
+                print(f"json.loads failed: {e_json}")
+                # If the value is a JSON string (double-encoded), try loading again
+                if isinstance(raw_cfg, str):
+                    try:
+                        inner = json.loads(raw_cfg)
+                        if isinstance(inner, str):
+                            config = json.loads(inner)
+                            print("Parsed config from double-encoded JSON")
+                        else:
+                            config = inner
+                            print("Parsed config from single json.loads fallback")
+                    except Exception:
+                        # Try Python literal eval (accept Python dict syntax with single quotes)
+                        try:
+                            import ast as _ast
+                            config = _ast.literal_eval(raw_cfg)
+                            print("Parsed config with ast.literal_eval (Python syntax)")
+                        except Exception as e_ast:
+                            print(f"ast.literal_eval also failed: {e_ast}")
+                            raise e_json
+
+            # If we somehow got a string, try one more json.loads
             if isinstance(config, str):
-                config = json.loads(config)
+                try:
+                    config = json.loads(config)
+                    print("Parsed config string to dict via json.loads")
+                except Exception:
+                    pass
+
             print(f" Config: {config}")
             
             # Create model config
