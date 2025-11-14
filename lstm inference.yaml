@@ -165,15 +165,35 @@ implementation:
                 }
             }
             
-            # Save output
-            output_dir = os.path.dirname(args.output_json)
-            if output_dir and not os.path.exists(output_dir):
-                os.makedirs(output_dir)
+            # Save output - try multiple paths for Argo/Elyra compatibility
+            output_paths = [
+                args.output_json,
+                '/tmp/outputs/output_json/data',
+                '/tmp/outputs/output/data',
+                '/tmp/output.json'
+            ]
             
-            with open(args.output_json, 'w') as f:
-                json.dump(result, f, indent=2)
+            saved = False
+            for path in output_paths:
+                try:
+                    output_dir = os.path.dirname(path)
+                    if output_dir and not os.path.exists(output_dir):
+                        os.makedirs(output_dir, exist_ok=True)
+                    
+                    with open(path, 'w') as f:
+                        json.dump(result, f, indent=2)
+                    
+                    print(f" Saved results to: {path}")
+                    saved = True
+                    break
+                except Exception as e:
+                    print(f"Failed to save to {path}: {e}")
             
-            print(f"\\n Inference completed! Results saved to: {args.output_json}")
+            if not saved:
+                print(" Could not save to any path - printing result:")
+                print(json.dumps(result, indent=2))
+            
+            print(f"\\n Inference completed!")
 
         if __name__ == '__main__':
             main()
