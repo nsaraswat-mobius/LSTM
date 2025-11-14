@@ -20,6 +20,7 @@ implementation:
         import json
         import pickle
         import os
+        import ast
 
         parser = argparse.ArgumentParser()
         parser.add_argument('--inp_string', type=str, required=True)
@@ -41,18 +42,36 @@ implementation:
         try:
             data = json.loads(raw_str)
             print("Parsed with json.loads")
+            print(f"Parsed data type: {type(data)}")
+            print(f"Parsed data shape info: {len(data) if hasattr(data, '__len__') else 'N/A'}")
         except json.JSONDecodeError as e:
             print(f"JSON parsing failed: {e}")
             # Try Python literal_eval for Python-style lists
             try:
-                import ast
                 data = ast.literal_eval(raw_str)
                 print("Parsed with ast.literal_eval")
+                print(f"Parsed data type: {type(data)}")
+                print(f"Parsed data shape info: {len(data) if hasattr(data, '__len__') else 'N/A'}")
             except Exception as ast_e:
                 print(f"literal_eval also failed: {ast_e}")
                 print("Raw input causing error:")
                 print(args.inp_string)
                 raise e
+        
+        # Validate the data structure for LSTM input
+        print(f"Final data structure check:")
+        print(f"Type: {type(data)}")
+        if isinstance(data, list):
+            print(f"Outer list length: {len(data)}")
+            if len(data) > 0 and isinstance(data[0], list):
+                print(f"Middle list length: {len(data[0])}")
+                if len(data[0]) > 0 and isinstance(data[0][0], list):
+                    print(f"Inner list length: {len(data[0][0])}")
+                    print(f"3D array detected: {len(data)}x{len(data[0])}x{len(data[0][0])}")
+                else:
+                    print(f"2D array detected: {len(data)}x{len(data[0])}")
+            else:
+                print(f"1D array detected: {len(data)}")
         
         os.makedirs(os.path.dirname(args.inp_pickle), exist_ok=True)
         with open(args.inp_pickle, "wb") as f:
