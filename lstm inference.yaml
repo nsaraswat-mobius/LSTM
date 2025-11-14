@@ -79,43 +79,45 @@ implementation:
             parser.add_argument('--output_json', type=str, required=True)
             args = parser.parse_args()
 
-            # Parse config (robust: accept JSON string, JSON-within-string, or Python dict syntax)
+            # Parse config (robust: handle escaped JSON from Argo/Elyra)
             raw_cfg = args.config_str
             print(f"Raw config_str repr: {repr(raw_cfg)}")
             config = None
-            # Try JSON parsing first
+            
+            # The config string has escaped quotes like: '{\"key\":\"value\"}'
+            # We need to unescape it first
             try:
+                # Method 1: Direct JSON parsing
                 config = json.loads(raw_cfg)
-                print("Parsed config with json.loads")
+                print("Parsed config with direct json.loads")
             except Exception as e_json:
-                print(f"json.loads failed: {e_json}")
-                # If the value is a JSON string (double-encoded), try loading again
-                if isinstance(raw_cfg, str):
-                    try:
-                        inner = json.loads(raw_cfg)
-                        if isinstance(inner, str):
-                            config = json.loads(inner)
-                            print("Parsed config from double-encoded JSON")
-                        else:
-                            config = inner
-                            print("Parsed config from single json.loads fallback")
-                    except Exception:
-                        # Try Python literal eval (accept Python dict syntax with single quotes)
-                        try:
-                            import ast as _ast
-                            config = _ast.literal_eval(raw_cfg)
-                            print("Parsed config with ast.literal_eval (Python syntax)")
-                        except Exception as e_ast:
-                            print(f"ast.literal_eval also failed: {e_ast}")
-                            raise e_json
-
-            # If we somehow got a string, try one more json.loads
-            if isinstance(config, str):
+                print(f"Direct json.loads failed: {e_json}")
                 try:
-                    config = json.loads(config)
-                    print("Parsed config string to dict via json.loads")
-                except Exception:
-                    pass
+                    # Method 2: Unescape the string and try again
+                    # Replace \" with " to fix escaped quotes
+                    unescaped = raw_cfg.replace('\\"', '"')
+                    print(f"Unescaped config: {repr(unescaped)}")
+                    config = json.loads(unescaped)
+                    print("Parsed config after unescaping quotes")
+                except Exception as e_unesc:
+                    print(f"Unescaped json.loads failed: {e_unesc}")
+                    try:
+                        # Method 3: Try to decode as if it's a JSON-encoded string
+                        decoded = json.loads(f'"{raw_cfg}"')  # Treat the whole thing as a JSON string
+                        config = json.loads(decoded)
+                        print("Parsed config as JSON-encoded string")
+                    except Exception as e_decode:
+                        print(f"JSON string decode failed: {e_decode}")
+                        try:
+                            # Method 4: Python literal eval with unescaping
+                            import ast as _ast
+                            unescaped_for_ast = raw_cfg.replace('\\"', '"').replace('\\\\', '\\')
+                            config = _ast.literal_eval(unescaped_for_ast)
+                            print("Parsed config with ast.literal_eval after unescaping")
+                        except Exception as e_ast:
+                            print(f"All parsing methods failed. Last error: {e_ast}")
+                            print(f"Raw input was: {raw_cfg}")
+                            raise e_json
 
             print(f" Config: {config}")
             
