@@ -1,3 +1,12 @@
+name: Fetch Inference Input
+description: Fetches inference input data from a specified API endpoint using schema_id and execution_id.
+inputs:
+  - {name: schema_id, type: String, description: 'The schema ID to fetch data from.'}
+  - {name: execution_id, type: String, description: 'The execution ID to filter the data.'}
+  - {name: token, type: string, description: 'Bearer token for authentication.'}
+  - {name: url_domain, type: String, description: 'The domain for the API endpoint.'}
+outputs:
+  - {name: out_pickle, type: Dataset}
 implementation:
   container:
     image: python:3.9
@@ -47,73 +56,65 @@ implementation:
         with open(args.token, 'r') as f:
             token = f.read().strip()
 
-        print(f"Fetching data")
+        print(f"Fetching data for execution_id: {args.execution_id}")
         data = fetch_data_from_api(args.schema_id, args.execution_id, token, args.url_domain)
-        print(f"API Response received")
+        print(f"API Response: {json.dumps(data, indent=2)}")
         
-        # Safely extract inference input with better error handling
-        content_list = data.get('content', [])
-        if not content_list:
-            raise ValueError("No content found in API response")
-        
-        inference_input_str = content_list[0].get('infernce_input', '[]')
-        print(f"Raw inference input string length: {len(inference_input_str)}")
-        
-        def safe_parse_array(data_str):
-            data_str = data_str.strip()
+        # Extract content
+        content = data.get('content', [])
+        if not content:
+            raise ValueError(f"No content found for execution_id: {args.execution_id}")
             
+        inference_input_str = content[0].get('infernce_input', '[]')
+        print(f"Raw inference_input string: {repr(inference_input_str)}")
+        print(f"String length: {len(inference_input_str)}")
+        
+        # Robust parsing - try multiple methods
+        inference_input = None
+        try:
             # Method 1: Try ast.literal_eval first
+            inference_input = ast.literal_eval(inference_input_str)
+            print(" Parsed with ast.literal_eval")
+        except (SyntaxError, ValueError) as e:
+            print(f" ast.literal_eval failed: {e}")
             try:
-                result = ast.literal_eval(data_str)
-                print("Successfully parsed using ast.literal_eval")
-                return result
-            except (SyntaxError, ValueError) as e:
-                print(f"ast.literal_eval failed: {e}")
+                # Method 2: Try JSON parsing
+                inference_input = json.loads(inference_input_str)
+                print(" Parsed with json.loads")
+            except json.JSONDecodeError as json_err:
+                print(f" json.loads also failed: {json_err}")
+                # Method 3: Try to fix common issues and retry
+                try:
+                    # Remove trailing commas or fix bracket issues
+                    cleaned_str = inference_input_str.strip()
+                    if cleaned_str.endswith(','):
+                        cleaned_str = cleaned_str[:-1]
+                    # Ensure proper bracket closure
+                    open_brackets = cleaned_str.count('[')
+                    close_brackets = cleaned_str.count(']')
+                    if open_brackets > close_brackets:
+                        cleaned_str += ']' * (open_brackets - close_brackets)
+                    
+                    print(f"Trying cleaned string: {repr(cleaned_str)}")
+                    inference_input = json.loads(cleaned_str)
+                    print(" Parsed with json.loads after cleaning")
+                except Exception as final_err:
+                    print(f" All parsing methods failed. Final error: {final_err}")
+                    print(f"Original string: {repr(inference_input_str)}")
+                    raise ValueError(f"Failed to parse inference_input: {final_err}")
+        
+        if inference_input is None:
+            raise ValueError("Failed to parse inference_input - result is None")
             
-            # Method 2: Try JSON parsing
-            try:
-                result = json.loads(data_str)
-                print("Successfully parsed using JSON")
-                return result
-            except json.JSONDecodeError as e:
-                print(f"JSON parsing failed: {e}")
-            
-            # Method 3: Fix bracket issues and try again
-            try:
-                # Count brackets and fix imbalance
-                open_brackets = data_str.count('[')
-                close_brackets = data_str.count(']')
-                if close_brackets < open_brackets:
-                    data_str += ']' * (open_brackets - close_brackets)
-                elif close_brackets > open_brackets:
-                    data_str = data_str.rstrip(']')  # Remove extra closing brackets
-                
-                result = ast.literal_eval(data_str)
-                print("Successfully parsed after bracket fixing")
-                return result
-            except (SyntaxError, ValueError) as e:
-                print(f"Fixed bracket parsing failed: {e}")
-            
-            # Method 4: Last resort - manual parsing for simple cases
-            try:
-                # Remove outer brackets and split
-                clean_str = data_str.strip('[]')
-                arrays = clean_str.split('],[')
-                result = []
-                for arr_str in arrays:
-                    # Clean up each array string
-                    arr_str = arr_str.replace('[', '').replace(']', '')
-                    numbers = [float(x.strip()) for x in arr_str.split(',')]
-                    result.append(numbers)
-                print("Successfully parsed using manual method")
-                return result
-            except Exception as e:
-                print(f"Manual parsing failed: {e}")
-                raise ValueError(f"Could not parse inference input: {data_str}")
-
-        # Convert the string representation of the list to an actual list
-        inference_input = safe_parse_array(inference_input_str)
-        print(f"Successfully parsed inference input with shape: {len(inference_input)} sequences")
+        print(f" Successfully parsed inference input")
+        print(f"   Type: {type(inference_input)}")
+        print(f"   Length: {len(inference_input) if hasattr(inference_input, '__len__') else 'N/A'}")
+        if hasattr(inference_input, '__len__') and len(inference_input) > 0:
+            print(f"   First element type: {type(inference_input[0])}")
+            if hasattr(inference_input[0], '__len__') and len(inference_input[0]) > 0:
+                print(f"   Sequence length: {len(inference_input[0])}")
+                if hasattr(inference_input[0][0], '__len__'):
+                    print(f"   Features per timestep: {len(inference_input[0][0])}")
         
         os.makedirs(os.path.dirname(args.out_pickle), exist_ok=True)
         with open(args.out_pickle, "wb") as f:
