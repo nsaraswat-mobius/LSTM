@@ -8,13 +8,8 @@ outputs:
   - {name: output_json, type: String, description: 'Prediction results as JSON'}
 implementation:
   container:
-    image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+    image: gurpreetgandhi/nesy-factory:v25
     command:
-      - sh
-      - -c
-      - |
-        pip install requests numpy --quiet
-        exec "$0" "$@"
       - python3
       - -u
       - -c
