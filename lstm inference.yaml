@@ -8,7 +8,7 @@ outputs:
   - {name: output_json, type: String, description: 'Prediction results as JSON'}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v25
+    image: python:3.9
     command:
       - sh
       - -c
