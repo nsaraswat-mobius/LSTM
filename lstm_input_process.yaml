@@ -1,9 +1,3 @@
-name: Process String Input
-description: Processes a string input into a pickled object.
-inputs:
-  - {name: inp_string, type: String, description: 'The input string (e.g., "[[1,2,3]]") to be processed.'}
-outputs:
-  - {name: inp_pickle, type: Dataset}
 implementation:
   container:
     image: python:3.9
@@ -11,6 +5,8 @@ implementation:
       - sh
       - -c
       - |
+        PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet requests || \
+        PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet requests --user
         exec "$0" "$@"
       - python3
       - -u
@@ -18,68 +14,120 @@ implementation:
       - |
         import argparse
         import json
-        import pickle
         import os
+        import requests
+        import pickle
         import ast
 
+        def fetch_data_from_api(schema_id, execution_id, token, url_domain):
+            url = f'https://{url_domain}/pi-entity-instances-service/v3.0/schemas/{schema_id}/instances/list'
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {token}'
+            }
+            data = {
+              "dbType": "TIDB",
+              "ownedOnly": False,
+              "filter": {
+                  "execution_id": execution_id
+              }
+            }
+            response = requests.post(url, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            return response.json()
+
         parser = argparse.ArgumentParser()
-        parser.add_argument('--inp_string', type=str, required=True)
-        parser.add_argument('--inp_pickle', type=str, required=True)
+        parser.add_argument('--schema_id', type=str, required=True)
+        parser.add_argument('--execution_id', type=str, required=True)
+        parser.add_argument('--token', type=str, required=True)
+        parser.add_argument('--url_domain', type=str, required=True)
+        parser.add_argument('--out_pickle', type=str, required=True)
         args = parser.parse_args()
+        
+        with open(args.token, 'r') as f:
+            token = f.read().strip()
 
-        # Robust parsing of input string (handle quoted JSON, Python lists)
-        print(f"Raw input: {repr(args.inp_string)}")
+        print(f"Fetching data")
+        data = fetch_data_from_api(args.schema_id, args.execution_id, token, args.url_domain)
+        print(f"API Response received")
         
-        # Clean the input string
-        raw_str = args.inp_string.strip()
+        # Safely extract inference input with better error handling
+        content_list = data.get('content', [])
+        if not content_list:
+            raise ValueError("No content found in API response")
         
-        # Remove outer quotes if present
-        if len(raw_str) >= 2 and ((raw_str[0] == '"' and raw_str[-1] == '"') or (raw_str[0] == "'" and raw_str[-1] == "'")):
-            print("Removing outer quotes")
-            raw_str = raw_str[1:-1]
+        inference_input_str = content_list[0].get('infernce_input', '[]')
+        print(f"Raw inference input string length: {len(inference_input_str)}")
         
-        # Try JSON parsing first
-        try:
-            data = json.loads(raw_str)
-            print("Parsed with json.loads")
-            print(f"Parsed data type: {type(data)}")
-            print(f"Parsed data shape info: {len(data) if hasattr(data, '__len__') else 'N/A'}")
-        except json.JSONDecodeError as e:
-            print(f"JSON parsing failed: {e}")
-            # Try Python literal_eval for Python-style lists
+        def safe_parse_array(data_str):
+            data_str = data_str.strip()
+            
+            # Method 1: Try ast.literal_eval first
             try:
-                data = ast.literal_eval(raw_str)
-                print("Parsed with ast.literal_eval")
-                print(f"Parsed data type: {type(data)}")
-                print(f"Parsed data shape info: {len(data) if hasattr(data, '__len__') else 'N/A'}")
-            except Exception as ast_e:
-                print(f"literal_eval also failed: {ast_e}")
-                print("Raw input causing error:")
-                print(args.inp_string)
-                raise e
-        
-        # Validate the data structure for LSTM input
-        print(f"Final data structure check:")
-        print(f"Type: {type(data)}")
-        if isinstance(data, list):
-            print(f"Outer list length: {len(data)}")
-            if len(data) > 0 and isinstance(data[0], list):
-                print(f"Middle list length: {len(data[0])}")
-                if len(data[0]) > 0 and isinstance(data[0][0], list):
-                    print(f"Inner list length: {len(data[0][0])}")
-                    print(f"3D array detected: {len(data)}x{len(data[0])}x{len(data[0][0])}")
-                else:
-                    print(f"2D array detected: {len(data)}x{len(data[0])}")
-            else:
-                print(f"1D array detected: {len(data)}")
-        
-        os.makedirs(os.path.dirname(args.inp_pickle), exist_ok=True)
-        with open(args.inp_pickle, "wb") as f:
-            pickle.dump(data, f)
+                result = ast.literal_eval(data_str)
+                print("Successfully parsed using ast.literal_eval")
+                return result
+            except (SyntaxError, ValueError) as e:
+                print(f"ast.literal_eval failed: {e}")
+            
+            # Method 2: Try JSON parsing
+            try:
+                result = json.loads(data_str)
+                print("Successfully parsed using JSON")
+                return result
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing failed: {e}")
+            
+            # Method 3: Fix bracket issues and try again
+            try:
+                # Count brackets and fix imbalance
+                open_brackets = data_str.count('[')
+                close_brackets = data_str.count(']')
+                if close_brackets < open_brackets:
+                    data_str += ']' * (open_brackets - close_brackets)
+                elif close_brackets > open_brackets:
+                    data_str = data_str.rstrip(']')  # Remove extra closing brackets
+                
+                result = ast.literal_eval(data_str)
+                print("Successfully parsed after bracket fixing")
+                return result
+            except (SyntaxError, ValueError) as e:
+                print(f"Fixed bracket parsing failed: {e}")
+            
+            # Method 4: Last resort - manual parsing for simple cases
+            try:
+                # Remove outer brackets and split
+                clean_str = data_str.strip('[]')
+                arrays = clean_str.split('],[')
+                result = []
+                for arr_str in arrays:
+                    # Clean up each array string
+                    arr_str = arr_str.replace('[', '').replace(']', '')
+                    numbers = [float(x.strip()) for x in arr_str.split(',')]
+                    result.append(numbers)
+                print("Successfully parsed using manual method")
+                return result
+            except Exception as e:
+                print(f"Manual parsing failed: {e}")
+                raise ValueError(f"Could not parse inference input: {data_str}")
 
-        print(f"Processed and saved pickled data to {args.inp_pickle}")
+        # Convert the string representation of the list to an actual list
+        inference_input = safe_parse_array(inference_input_str)
+        print(f"Successfully parsed inference input with shape: {len(inference_input)} sequences")
+        
+        os.makedirs(os.path.dirname(args.out_pickle), exist_ok=True)
+        with open(args.out_pickle, "wb") as f:
+            pickle.dump(inference_input, f)
+
+        print(f"Saved pickled data to {args.out_pickle}")
     args:
-      - --inp_string
-      - {inputValue: inp_string}
-      - --inp_pickle
-      - {outputPath: inp_pickle}
+      - --schema_id
+      - {inputValue: schema_id}
+      - --execution_id
+      - {inputValue: execution_id}
+      - --token
+      - {inputPath: token}
+      - --url_domain
+      - {inputValue: url_domain}
+      - --out_pickle
+      - {outputPath: out_pickle}
