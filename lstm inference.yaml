@@ -8,11 +8,12 @@ outputs:
   - {name: output_json, type: String, description: 'Prediction results as JSON'}
 implementation:
   container:
-    image: python:3.9
+    image: pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
     command:
       - sh
       - -c
       - |
+        pip install requests numpy --quiet
         exec "$0" "$@"
       - python3
       - -u
