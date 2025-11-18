@@ -9,7 +9,7 @@ outputs:
   - {name: epoch_loss, type: String}
 implementation:
   container:
-    image: gurpreetgandhi/nesy-factory:v26
+    image: gurpreetgandhi/nesy-factory:v25
     command:
       - sh
       - -c
@@ -47,11 +47,43 @@ implementation:
         print("Starting LSTM Model Training")
         epoch_loss_data = []
 
-        # Check if CAFO mode is enabled
-        if config.get('use_cafo', False):
+        # Handle backward compatibility for old models
+        if not hasattr(model_obj, 'use_cafo'):
+            model_obj.use_cafo = False
+            print("Backward compatibility: Setting use_cafo=False for existing model")
+
+        # Check if CAFO mode is enabled in config
+        use_cafo_from_config = config.get('use_cafo', False)
+        
+        if use_cafo_from_config and not model_obj.use_cafo:
+            print("Warning: Config requests CAFO but model was created without CAFO support.")
+            print("Creating new CAFO model with same architecture...")
+            
+            # Create new CAFO model with same base config but enable CAFO
+            new_config = {
+                'input_dim': model_obj.input_dim,
+                'hidden_dim': model_obj.hidden_dim,
+                'output_dim': model_obj.output_dim,
+                'num_layers': model_obj.num_layers,
+                'dropout': model_obj.dropout,
+                'optimizer': model_obj.optimizer_type,
+                'learning_rate': model_obj.learning_rate,
+                'loss_function': model_obj.loss_function_type,
+                'use_cafo': True,
+                'cafo_blocks': config.get('cafo_blocks', model_obj.num_layers),
+                'epochs_per_block': config.get('epochs_per_block', 50),
+                'block_lr': config.get('block_lr', 0.001),
+                'task_type': config.get('task_type', 'sequence_to_one')
+            }
+            
+            model_obj = LSTM(new_config)
+            print(f"Created new CAFO model with {new_config['cafo_blocks']} blocks")
+
+        # Training logic
+        if hasattr(model_obj, 'use_cafo') and model_obj.use_cafo:
             print("Using CAFO (Cascaded Forward) training mode")
-            print(f"CAFO blocks: {config.get('cafo_blocks', 3)}")
-            print(f"Epochs per block: {config.get('epochs_per_block', 50)}")
+            print(f"CAFO blocks: {getattr(model_obj, 'cafo_blocks', 'unknown')}")
+            print(f"Epochs per block: {getattr(model_obj, 'epochs_per_block', 'unknown')}")
             
             # Extract data from train_loader for CAFO training
             X_train_list, y_train_list = [], []
