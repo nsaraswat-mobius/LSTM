@@ -3,7 +3,7 @@ description: Updates a schema instance with LSTM inference prediction output.
 inputs:
   - {name: schema_id, type: String}
   - {name: execution_id, type: String}
-  - {name: output_json, type: String}
+  - {name: output_json, type: Dataset}
   - {name: token, type: String}
   - {name: url_domain, type: String}
 implementation:
