@@ -3,8 +3,8 @@ description: Updates a schema instance with LSTM inference prediction output.
 inputs:
   - {name: schema_id, type: String}
   - {name: execution_id, type: String}
-  - {name: output_json, type: String}
-  - {name: token, type: string}
+  - {name: output_json, type: Dataset}
+  - {name: token, type: String}
   - {name: url_domain, type: String}
 implementation:
   container:
@@ -23,11 +23,13 @@ implementation:
         import argparse
         import json
         import requests
+        import os
 
         def update_instance(access_token, domain, schema_id, execution_id, updates):
             update_url = f"https://{domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances"
             headers = {
-                "Authorization": f"Bearer {access_token}", "Content-Type": "application/json"
+                "Authorization": f"Bearer {access_token}", 
+                "Content-Type": "application/json"
             }
             patch_operations = [
                 {"operation": "REPLACE", "path": field, "value": value}
@@ -51,17 +53,45 @@ implementation:
         parser.add_argument('--url_domain', type=str, required=True)
         args = parser.parse_args()
 
+        # Read token
         with open(args.token, 'r') as f:
             access_token = f.read().strip()
 
-        # Load the LSTM inference output
-        with open(args.output_json, 'r') as f:
-            prediction_data = json.load(f)
+        # Read the LSTM inference output - handle multiple possible paths
+        prediction_data = None
+        possible_paths = [
+            args.output_json,
+            '/tmp/outputs/output_json/data',
+            '/tmp/outputs/output/data', 
+            '/tmp/output.json'
+        ]
         
-        # Extract prediction and convert to string for storage
-        prediction_str = json.dumps(prediction_data.get('prediction', []))
+        for path in possible_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        prediction_data = json.load(f)
+                    print(f"Successfully loaded prediction data from: {path}")
+                    break
+                except Exception as e:
+                    print(f"Failed to load from {path}: {e}")
+        
+        if prediction_data is None:
+            raise FileNotFoundError(f"Could not find prediction output file in any of: {possible_paths}")
 
-        # Prepare update payload - using the same field name as reference
+        # Extract prediction and convert to string for storage
+        prediction_list = prediction_data.get('prediction', [])
+        print(f"Raw prediction data: {prediction_data}")
+        print(f"Extracted prediction: {prediction_list}")
+        
+        # Flatten the prediction if it's nested (common in LSTM outputs)
+        if prediction_list and isinstance(prediction_list[0], list):
+            prediction_list = [item for sublist in prediction_list for item in sublist]
+            print(f"Flattened prediction: {prediction_list}")
+        
+        prediction_str = json.dumps(prediction_list)
+
+        # Prepare update payload
         update_payload = {"infernce_output": prediction_str}
         
         print(f"Updating instance for execution_id {args.execution_id}")
