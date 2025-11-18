@@ -1,0 +1,134 @@
+name: Train LSTM Model
+description: Trains the LSTM model.
+inputs:
+  - {name: model, type: Model}
+  - {name: train_loader, type: Dataset}
+  - {name: config, type: String}
+outputs:
+  - {name: trained_model, type: Model}
+  - {name: epoch_loss, type: String}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v25
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        import torch
+        
+        from nesy_factory.RNNs import LSTM
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--model', type=str, required=True)
+        parser.add_argument('--train_loader', type=str, required=True)
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--trained_model', type=str, required=True)
+        parser.add_argument('--epoch_loss', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        with open(args.model, 'rb') as f:
+            model_obj = pickle.load(f)
+
+        with open(args.train_loader, 'rb') as f:
+            train_loader_obj = pickle.load(f)
+
+        print("Starting LSTM Model Training")
+        epoch_loss_data = []
+
+        # Check if CAFO mode is enabled
+        if config.get('use_cafo', False):
+            print("Using CAFO (Cascaded Forward) training mode")
+            print(f"CAFO blocks: {config.get('cafo_blocks', 3)}")
+            print(f"Epochs per block: {config.get('epochs_per_block', 50)}")
+            
+            # Extract data from train_loader for CAFO training
+            X_train_list, y_train_list = [], []
+            for inputs, labels in train_loader_obj:
+                X_train_list.append(inputs)
+                y_train_list.append(labels)
+            
+            X_train = torch.cat(X_train_list, dim=0)
+            y_train = torch.cat(y_train_list, dim=0)
+            
+            print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
+            
+            # CAFO training
+            cafo_results = model_obj.train_cafo(X_train, y_train, verbose=True)
+            
+            # Extract loss information from CAFO results
+            for i, block_result in enumerate(cafo_results['block_results']):
+                for epoch, loss in enumerate(block_result['train_losses']):
+                    epoch_loss_data.append({
+                        'block': i + 1,
+                        'epoch': epoch + 1,
+                        'loss': float(loss),
+                        'training_mode': 'cafo'
+                    })
+            
+            print(f"CAFO training completed in {cafo_results['total_training_time']:.2f} seconds")
+            print(f"Total blocks trained: {len(cafo_results['block_results'])}")
+            
+        else:
+            print("Using traditional backpropagation training mode")
+            
+            epochs = config.get('epochs', 10)
+            print(f"Training for {epochs} epochs")
+            
+            for epoch in range(epochs):
+                model_obj.train()
+                total_train_loss = 0
+                batch_count = 0
+                
+                for inputs, labels in train_loader_obj:
+                    loss = model_obj.train_step((inputs, labels))
+                    total_train_loss += loss
+                    batch_count += 1
+                
+                avg_epoch_loss = total_train_loss / batch_count
+                epoch_loss_data.append({
+                    'epoch': epoch + 1,
+                    'loss': float(avg_epoch_loss),
+                    'training_mode': 'traditional'
+                })
+                
+                print(f"Epoch [{epoch+1}/{epochs}] - Average Loss: {avg_epoch_loss:.6f}")
+
+        print("LSTM Model Training Completed")
+
+        output_dir_trained_model = os.path.dirname(args.trained_model)
+        if output_dir_trained_model and not os.path.exists(output_dir_trained_model):
+            os.makedirs(output_dir_trained_model, exist_ok=True)
+        with open(args.trained_model, 'wb') as f:
+            pickle.dump(model_obj, f)
+
+        output_dir_epoch_loss = os.path.dirname(args.epoch_loss)
+        if output_dir_epoch_loss and not os.path.exists(output_dir_epoch_loss):
+            os.makedirs(output_dir_epoch_loss, exist_ok=True)
+        with open(args.epoch_loss, 'w') as f:
+            json.dump(epoch_loss_data, f, indent=2)
+
+        print(f"Saved trained LSTM model to {args.trained_model}")
+        print(f"Saved epoch loss data to {args.epoch_loss}")
+    args:
+      - --model
+      - {inputPath: model}
+      - --train_loader
+      - {inputPath: train_loader}
+      - --config
+      - {inputValue: config}
+      - --trained_model
+      - {outputPath: trained_model}
+      - --epoch_loss
+      - {outputPath: epoch_loss}
