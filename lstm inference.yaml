@@ -5,7 +5,7 @@ inputs:
   - {name: config_str, type: String, description: 'LSTM model configuration as JSON string'}
   - {name: weights_url, type: String, description: 'URL to download the trained LSTM model weights (.pth file)'}
 outputs:
-  - {name: output_json, type: String, description: 'Prediction results as JSON'}
+  - {name: output_json, type: Dataset, description: 'Prediction results as JSON'}
 implementation:
   container:
     image: gurpreetgandhi/nesy-factory:v25
