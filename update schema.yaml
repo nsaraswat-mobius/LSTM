@@ -1,13 +1,11 @@
-name: Update Schema with Prediction
-description: Updates a schema instance with the prediction output.
+name: Update Schema with LSTM Prediction
+description: Updates a schema instance with LSTM inference prediction output.
 inputs:
   - {name: schema_id, type: String}
   - {name: execution_id, type: String}
-  - {name: prediction_json, type: String}
-  - {name: token, type: String}
+  - {name: output_json, type: String}
+  - {name: token, type: string}
   - {name: url_domain, type: String}
-outputs:
-  - {name: update_status, type: String}
 implementation:
   container:
     image: python:3.9
@@ -25,13 +23,11 @@ implementation:
         import argparse
         import json
         import requests
-        import os
 
         def update_instance(access_token, domain, schema_id, execution_id, updates):
             update_url = f"https://{domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances"
             headers = {
-                "Authorization": f"Bearer {access_token}", 
-                "Content-Type": "application/json"
+                "Authorization": f"Bearer {access_token}", "Content-Type": "application/json"
             }
             patch_operations = [
                 {"operation": "REPLACE", "path": field, "value": value}
@@ -39,20 +35,10 @@ implementation:
             ]
             payload = {
                 "dbType": "TIDB",
-                "conditionalFilter": {
-                    "conditions": [{
-                        "field": "execution_id", 
-                        "operator": "EQUAL", 
-                        "value": execution_id
-                    }]
-                },
-                "partialUpdateRequests": [{
-                    "patch": patch_operations
-                }]
+                "conditionalFilter": {"conditions": [{"field": "execution_id", "operator": "EQUAL", "value": execution_id}]},
+                "partialUpdateRequests": [{"patch": patch_operations}]
             }
-            print(f"Update URL: {update_url}")
             print(f"Update payload: {json.dumps(payload, indent=2)}")
-            
             response = requests.patch(update_url, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
             return response.json()
@@ -60,47 +46,37 @@ implementation:
         parser = argparse.ArgumentParser()
         parser.add_argument('--schema_id', type=str, required=True)
         parser.add_argument('--execution_id', type=str, required=True)
-        parser.add_argument('--prediction_json', type=str, required=True)
+        parser.add_argument('--output_json', type=str, required=True)
         parser.add_argument('--token', type=str, required=True)
         parser.add_argument('--url_domain', type=str, required=True)
-        parser.add_argument('--update_status', type=str, required=True)
         args = parser.parse_args()
 
-        # Read token from file
         with open(args.token, 'r') as f:
             access_token = f.read().strip()
 
-        # Read prediction JSON from file  
-        with open(args.prediction_json, 'r') as f:
+        # Load the LSTM inference output
+        with open(args.output_json, 'r') as f:
             prediction_data = json.load(f)
         
+        # Extract prediction and convert to string for storage
         prediction_str = json.dumps(prediction_data.get('prediction', []))
-        print(f"Prediction to save: {prediction_str}")
 
+        # Prepare update payload - using the same field name as reference
         update_payload = {"infernce_output": prediction_str}
         
-        print(f"Updating instance for execution_id: {args.execution_id}")
+        print(f"Updating instance for execution_id {args.execution_id}")
         result = update_instance(access_token, args.url_domain, args.schema_id, args.execution_id, update_payload)
-        print(f"Update result: {json.dumps(result, indent=2)}")
-        
-        # Save update status
-        status_message = f"Successfully updated execution_id {args.execution_id}"
-        os.makedirs(os.path.dirname(args.update_status), exist_ok=True)
-        with open(args.update_status, 'w') as f:
-            f.write(status_message)
-            
-        print(f"✅ {status_message}")
+        print(f"Instance for execution_id {args.execution_id} updated successfully.")
+        print(f"Update response: {json.dumps(result, indent=2)}")
 
     args:
       - --schema_id
       - {inputValue: schema_id}
       - --execution_id
       - {inputValue: execution_id}
-      - --prediction_json
-      - {inputPath: prediction_json}
+      - --output_json
+      - {inputPath: output_json}
       - --token
       - {inputPath: token}
       - --url_domain
       - {inputValue: url_domain}
-      - --update_status
-      - {outputPath: update_status}
