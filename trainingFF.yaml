@@ -1,0 +1,243 @@
+name: Train LSTM Model
+description: Trains the LSTM model with Traditional, CAFO, or Forward Forward methods.
+inputs:
+  - {name: model, type: Model}
+  - {name: train_loader, type: Dataset}
+  - {name: config, type: String}
+outputs:
+  - {name: trained_model, type: Model}
+  - {name: epoch_loss, type: String}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v26
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        import torch
+        
+        from nesy_factory.RNNs import LSTM
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--model', type=str, required=True)
+        parser.add_argument('--train_loader', type=str, required=True)
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--trained_model', type=str, required=True)
+        parser.add_argument('--epoch_loss', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        with open(args.model, 'rb') as f:
+            model_obj = pickle.load(f)
+
+        with open(args.train_loader, 'rb') as f:
+            train_loader_obj = pickle.load(f)
+
+        print("Starting LSTM Model Training")
+        epoch_loss_data = []
+
+        # Handle backward compatibility for old models
+        if not hasattr(model_obj, 'use_cafo'):
+            model_obj.use_cafo = False
+            print("Backward compatibility: Setting use_cafo=False for existing model")
+        
+        if not hasattr(model_obj, 'use_forward_forward'):
+            model_obj.use_forward_forward = False
+            print("Backward compatibility: Setting use_forward_forward=False for existing model")
+
+        # Check training method from config
+        use_cafo_from_config = config.get('use_cafo', False)
+        use_ff_from_config = config.get('use_forward_forward', False)
+        
+        # Validate only one training method is selected
+        if sum([use_cafo_from_config, use_ff_from_config]) > 1:
+            raise ValueError("Only one training method can be selected: use_cafo or use_forward_forward")
+        
+        # Handle CAFO model creation/compatibility
+        if use_cafo_from_config and not model_obj.use_cafo:
+            print("Warning: Config requests CAFO but model was created without CAFO support.")
+            print("Creating new CAFO model with same architecture...")
+            
+            new_config = {
+                'input_dim': model_obj.input_dim,
+                'hidden_dim': model_obj.hidden_dim,
+                'output_dim': model_obj.output_dim,
+                'num_layers': model_obj.num_layers,
+                'dropout': model_obj.dropout,
+                'optimizer': model_obj.optimizer_type,
+                'learning_rate': model_obj.learning_rate,
+                'loss_function': model_obj.loss_function_type,
+                'use_cafo': True,
+                'cafo_blocks': config.get('cafo_blocks', model_obj.num_layers),
+                'epochs_per_block': config.get('epochs_per_block', 50),
+                'block_lr': config.get('block_lr', 0.001),
+                'task_type': config.get('task_type', 'sequence_to_one')
+            }
+            
+            model_obj = LSTM(new_config)
+            print(f"Created new CAFO model with {new_config['cafo_blocks']} blocks")
+        
+        # Handle Forward Forward model creation/compatibility
+        elif use_ff_from_config and not model_obj.use_forward_forward:
+            print("Warning: Config requests Forward Forward but model was created without FF support.")
+            print("Creating new Forward Forward model with same architecture...")
+            
+            new_config = {
+                'input_dim': model_obj.input_dim,
+                'hidden_dim': model_obj.hidden_dim,
+                'output_dim': model_obj.output_dim,
+                'num_layers': model_obj.num_layers,
+                'dropout': model_obj.dropout,
+                'optimizer': model_obj.optimizer_type,
+                'learning_rate': model_obj.learning_rate,
+                'loss_function': model_obj.loss_function_type,
+                'use_forward_forward': True,
+                'ff_blocks': config.get('ff_blocks', 3),
+                'ff_threshold': config.get('ff_threshold', 2.0),
+                'ff_epochs_per_block': config.get('ff_epochs_per_block', 100),
+                'ff_lr': config.get('ff_lr', 0.03)
+            }
+            
+            model_obj = LSTM(new_config)
+            print(f"Created new Forward Forward model with {new_config['ff_blocks']} blocks")
+
+        # Extract data from train_loader for training
+        X_train_list, y_train_list = [], []
+        for inputs, labels in train_loader_obj:
+            X_train_list.append(inputs)
+            y_train_list.append(labels)
+        
+        X_train = torch.cat(X_train_list, dim=0)
+        y_train = torch.cat(y_train_list, dim=0)
+        
+        print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
+
+        # Training logic based on method
+        if hasattr(model_obj, 'use_forward_forward') and model_obj.use_forward_forward:
+            print(" Using Forward Forward training mode")
+            print(f"FF blocks: {getattr(model_obj, 'ff_blocks', 'unknown')}")
+            print(f"FF threshold: {getattr(model_obj, 'ff_threshold', 'unknown')}")
+            print(f"Epochs per FF block: {getattr(model_obj, 'ff_epochs_per_block', 'unknown')}")
+            print(f"FF learning rate: {getattr(model_obj, 'ff_lr', 'unknown')}")
+            
+            # Forward Forward training
+            ff_results = model_obj.train_forward_forward(X_train, y_train, verbose=True)
+            
+            # Extract loss information from Forward Forward results
+            for i, block_result in enumerate(ff_results['block_results']):
+                for epoch, loss in enumerate(block_result['losses']):
+                    epoch_loss_data.append({
+                        'block': i + 1,
+                        'epoch': epoch + 1,
+                        'loss': float(loss),
+                        'training_mode': 'forward_forward'
+                    })
+            
+            print(f"Forward Forward training completed in {ff_results['total_training_time']:.2f} seconds")
+            print(f"Total FF blocks trained: {len(ff_results['block_results'])}")
+            
+        elif hasattr(model_obj, 'use_cafo') and model_obj.use_cafo:
+            print(" Using CAFO (Cascaded Forward) training mode")
+            print(f"CAFO blocks: {getattr(model_obj, 'cafo_blocks', 'unknown')}")
+            print(f"Epochs per block: {getattr(model_obj, 'epochs_per_block', 'unknown')}")
+            
+            # CAFO training
+            cafo_results = model_obj.train_cafo(X_train, y_train, verbose=True)
+            
+            # Extract loss information from CAFO results
+            for i, block_result in enumerate(cafo_results['block_results']):
+                for epoch, loss in enumerate(block_result['train_losses']):
+                    epoch_loss_data.append({
+                        'block': i + 1,
+                        'epoch': epoch + 1,
+                        'loss': float(loss),
+                        'training_mode': 'cafo'
+                    })
+            
+            print(f"CAFO training completed in {cafo_results['total_training_time']:.2f} seconds")
+            print(f"Total blocks trained: {len(cafo_results['block_results'])}")
+            
+        else:
+            print(" Using traditional backpropagation training mode")
+            
+            epochs = config.get('epochs', 10)
+            print(f"Training for {epochs} epochs")
+            
+            for epoch in range(epochs):
+                model_obj.train()
+                total_train_loss = 0
+                batch_count = 0
+                
+                for inputs, labels in train_loader_obj:
+                    loss = model_obj.train_step((inputs, labels))
+                    total_train_loss += loss
+                    batch_count += 1
+                
+                avg_epoch_loss = total_train_loss / batch_count
+                epoch_loss_data.append({
+                    'epoch': epoch + 1,
+                    'loss': float(avg_epoch_loss),
+                    'training_mode': 'traditional'
+                })
+                
+                print(f"Epoch [{epoch+1}/{epochs}] - Average Loss: {avg_epoch_loss:.6f}")
+
+        # Training completion summary
+        training_mode = 'forward_forward' if (hasattr(model_obj, 'use_forward_forward') and model_obj.use_forward_forward) else \
+                       'cafo' if (hasattr(model_obj, 'use_cafo') and model_obj.use_cafo) else 'traditional'
+        
+        print(f"\\n LSTM Model Training Completed - Mode: {training_mode.upper()}")
+        print(f" Loss entries recorded: {len(epoch_loss_data)}")
+
+        # Save trained model
+        output_dir_trained_model = os.path.dirname(args.trained_model)
+        if output_dir_trained_model and not os.path.exists(output_dir_trained_model):
+            os.makedirs(output_dir_trained_model, exist_ok=True)
+        with open(args.trained_model, 'wb') as f:
+            pickle.dump(model_obj, f)
+
+        # Save epoch loss data with training summary
+        training_summary = {
+            'training_mode': training_mode,
+            'total_loss_entries': len(epoch_loss_data),
+            'final_loss': epoch_loss_data[-1]['loss'] if epoch_loss_data else 0.0,
+            'model_config': {
+                'input_dim': model_obj.input_dim,
+                'hidden_dim': model_obj.hidden_dim,
+                'output_dim': model_obj.output_dim,
+                'training_method': training_mode
+            },
+            'loss_history': epoch_loss_data
+        }
+
+        output_dir_epoch_loss = os.path.dirname(args.epoch_loss)
+        if output_dir_epoch_loss and not os.path.exists(output_dir_epoch_loss):
+            os.makedirs(output_dir_epoch_loss, exist_ok=True)
+        with open(args.epoch_loss, 'w') as f:
+            json.dump(training_summary, f, indent=2)
+
+        print(f" Saved trained LSTM model to {args.trained_model}")
+        print(f" Saved training summary to {args.epoch_loss}")
+        print(f" Training method used: {training_mode.upper()}")
+    args:
+      - --model
+      - {inputPath: model}
+      - --train_loader
+      - {inputPath: train_loader}
+      - --config
+      - {inputValue: config}
+      - --trained_model
+      - {outputPath: trained_model}
+      - --epoch_loss
+      - {outputPath: epoch_loss}
