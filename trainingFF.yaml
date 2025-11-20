@@ -93,15 +93,20 @@ implementation:
             print("Warning: Config requests Forward Forward but model was created without FF support.")
             print("Creating new Forward Forward model with same architecture...")
             
+            # Forward Forward requires multiple output classes (minimum 2)
+            ff_output_dim = max(model_obj.output_dim, 2)
+            if model_obj.output_dim == 1:
+                print(f"Warning: Forward Forward requires output_dim > 1. Changing from {model_obj.output_dim} to {ff_output_dim}")
+            
             new_config = {
                 'input_dim': model_obj.input_dim,
                 'hidden_dim': model_obj.hidden_dim,
-                'output_dim': model_obj.output_dim,
+                'output_dim': ff_output_dim,  # Ensure minimum 2 classes
                 'num_layers': model_obj.num_layers,
                 'dropout': model_obj.dropout,
                 'optimizer': model_obj.optimizer_type,
                 'learning_rate': model_obj.learning_rate,
-                'loss_function': model_obj.loss_function_type,
+                'loss_function': 'BCEWithLogitsLoss',  # Use supported loss function
                 'use_forward_forward': True,
                 'ff_blocks': config.get('ff_blocks', 3),
                 'ff_threshold': config.get('ff_threshold', 2.0),
@@ -122,6 +127,38 @@ implementation:
         y_train = torch.cat(y_train_list, dim=0)
         
         print(f"Training data shape: X={X_train.shape}, y={y_train.shape}")
+        
+        # Handle label preprocessing for Forward Forward
+        if hasattr(model_obj, 'use_forward_forward') and model_obj.use_forward_forward:
+            # Forward Forward expects integer class labels, not continuous values
+            if y_train.dim() > 1 and y_train.shape[1] == 1:
+                y_train = y_train.squeeze(-1)  # Remove last dimension if it's 1
+            
+            # Convert continuous labels to discrete classes for Forward Forward
+            if y_train.dtype == torch.float32 or y_train.dtype == torch.float64:
+                print("Converting continuous labels to discrete classes for Forward Forward...")
+                
+                # Simple thresholding: convert to binary classes
+                if model_obj.output_dim == 2:
+                    # Binary classification: threshold at mean
+                    threshold = y_train.mean()
+                    y_train = (y_train > threshold).long()
+                    print(f"Applied threshold {threshold:.4f} for binary classification")
+                else:
+                    # Multi-class: quantile-based discretization
+                    quantiles = torch.quantile(y_train, torch.linspace(0, 1, model_obj.output_dim + 1))
+                    y_train_discrete = torch.zeros_like(y_train, dtype=torch.long)
+                    for i in range(model_obj.output_dim):
+                        if i == model_obj.output_dim - 1:
+                            mask = y_train >= quantiles[i]
+                        else:
+                            mask = (y_train >= quantiles[i]) & (y_train < quantiles[i + 1])
+                        y_train_discrete[mask] = i
+                    y_train = y_train_discrete
+                    print(f"Applied quantile-based discretization to {model_obj.output_dim} classes")
+                
+                print(f"Label distribution: {torch.bincount(y_train)}")
+                print(f"Updated training data shape: X={X_train.shape}, y={y_train.shape}")
 
         # Training logic based on method
         if hasattr(model_obj, 'use_forward_forward') and model_obj.use_forward_forward:
