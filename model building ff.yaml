@@ -1,0 +1,123 @@
+name: Initialize ff LSTM Model
+description: Initializes the LSTM model with support for Traditional, CAFO, and Forward Forward methods.
+inputs:
+  - {name: config, type: String}
+outputs:
+  - {name: model, type: Model}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v26
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        
+        from nesy_factory.RNNs import LSTM
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--model', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        print("Initializing LSTM Model")
+        print(f"Model type: {config.get('model_type', 'LSTM')}")
+
+        # Handle Forward Forward model configuration
+        use_forward_forward = config.get('use_forward_forward', False)
+        use_cafo = config.get('use_cafo', False)
+        
+        # Validate only one training method is selected
+        if sum([use_cafo, use_forward_forward]) > 1:
+            raise ValueError("Only one training method can be selected: use_cafo or use_forward_forward")
+        
+        # Map unsupported loss functions to supported ones
+        loss_function = config['loss_function']
+        if loss_function.lower() == 'crossentropyloss':
+            loss_function = 'BCEWithLogitsLoss'  # Use supported loss function
+            print(f"Mapped CrossEntropyLoss to BCEWithLogitsLoss for compatibility")
+        
+        model_config = {
+            'input_dim': len(config['feature_columns']),
+            'hidden_dim': config['hidden_dim'],
+            'output_dim': 1,
+            'num_layers': config['num_layers'],
+            'dropout': config['dropout'],
+            'optimizer': 'adam',
+            'learning_rate': config['learning_rate'],
+            'epochs': config['epochs'],
+            'loss_function': loss_function
+        }
+        
+        # Add Forward Forward specific parameters
+        if use_forward_forward:
+            model_config.update({
+                'use_forward_forward': True,
+                'ff_blocks': config.get('ff_blocks', 3),
+                'ff_threshold': config.get('ff_threshold', 2.0),
+                'ff_epochs_per_block': config.get('ff_epochs_per_block', 100),
+                'ff_lr': config.get('ff_lr', 0.03)
+            })
+            print(f" Creating Forward Forward LSTM model")
+            print(f"   FF blocks: {model_config['ff_blocks']}")
+            print(f"   FF threshold: {model_config['ff_threshold']}")
+            print(f"   Epochs per FF block: {model_config['ff_epochs_per_block']}")
+            print(f"   FF learning rate: {model_config['ff_lr']}")
+            
+        # Add CAFO specific parameters
+        elif use_cafo:
+            model_config.update({
+                'use_cafo': True,
+                'cafo_blocks': config.get('cafo_blocks', model_config['num_layers']),
+                'epochs_per_block': config.get('epochs_per_block', 50),
+                'block_lr': config.get('block_lr', 0.001),
+                'task_type': config.get('task_type', 'sequence_to_one')
+            })
+            print(f" Creating CAFO LSTM model")
+            print(f"   CAFO blocks: {model_config['cafo_blocks']}")
+            print(f"   Epochs per block: {model_config['epochs_per_block']}")
+            print(f"   Block learning rate: {model_config['block_lr']}")
+            print(f"   Task type: {model_config['task_type']}")
+        else:
+            print(" Creating Traditional LSTM model")
+
+        # Create model
+        print(f"Model architecture:")
+        print(f"  Input dim: {model_config['input_dim']}")
+        print(f"  Hidden dim: {model_config['hidden_dim']}")
+        print(f"  Output dim: {model_config['output_dim']}")
+        print(f"  Num layers: {model_config['num_layers']}")
+        print(f"  Dropout: {model_config['dropout']}")
+        print(f"  Loss function: {model_config['loss_function']}")
+
+        model_obj = LSTM(model_config)
+
+        # Save model
+        output_dir = os.path.dirname(args.model)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        with open(args.model, "wb") as f:
+            pickle.dump(model_obj, f)
+
+        training_method = 'Forward Forward' if use_forward_forward else \
+                         'CAFO' if use_cafo else 'Traditional'
+        
+        print(f" Successfully created {training_method} LSTM model")
+        print(f" Saved LSTM model to {args.model}")
+    args:
+      - --config
+      - {inputValue: config}
+      - --model
+      - {outputPath: model}
