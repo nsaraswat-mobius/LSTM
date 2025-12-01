@@ -1,0 +1,367 @@
+name: Evaluate LSTM Model
+description: Evaluates the trained LSTM model with comprehensive metrics for adoption chasm classification and standard evaluations.
+inputs:
+  - {name: trained_model, type: Model}
+  - {name: test_loader, type: Dataset}
+  - {name: config, type: String}
+outputs:
+  - {name: eval_metrics, type: Metrics}
+  - {name: eval_metrics_json, type: String}
+implementation:
+  container:
+    image: gurpreetgandhi/nesy-factory:v30
+    command:
+      - sh
+      - -c
+      - |
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import json
+        import os
+        import pickle
+        import sys
+        import torch
+        import torch.nn as nn
+        import numpy as np
+        from sklearn.metrics import (
+            accuracy_score, classification_report, confusion_matrix,
+            mean_squared_error, mean_absolute_error, r2_score,
+            precision_recall_fscore_support, roc_auc_score
+        )
+        from collections import defaultdict
+        
+        from nesy_factory.RNNs import LSTM
+
+        def evaluate_adoption_classification(model_obj, test_loader_obj, config):
+            
+            model_obj.eval()
+            all_predictions = []
+            all_targets = []
+            all_probabilities = []
+            test_loss = 0.0
+            batch_count = 0
+            
+            # Stage mapping for adoption chasm
+            stage_thresholds = [0.2, 0.4, 0.6, 0.8, 1.0]
+            stage_names = ['Laggards', 'Late_Majority', 'Early_Majority', 'Early_Adopters', 'Innovators']
+            
+            print("Running adoption chasm evaluation...")
+            
+            with torch.no_grad():
+                for inputs, targets in test_loader_obj:
+                    # Forward pass
+                    if hasattr(model_obj, 'forward'):
+                        outputs = model_obj(inputs)
+                        
+                        # Calculate loss if criterion is available
+                        if hasattr(model_obj, 'criterion'):
+                            outputs_loss = outputs.squeeze(-1) if outputs.dim() > 1 else outputs
+                            targets_loss = targets.squeeze(-1) if targets.dim() > 1 else targets
+                            loss = model_obj.criterion(outputs_loss, targets_loss)
+                            test_loss += loss.item()
+                    else:
+                        # Use eval_step if available
+                        batch_metrics = model_obj.eval_step([(inputs, targets)])
+                        outputs = torch.tensor(batch_metrics.get('predictions', []))
+                        test_loss += batch_metrics.get('loss', 0)
+                    
+                    # Collect predictions and targets
+                    if outputs.dim() > 1:
+                        outputs = outputs.squeeze(-1)
+                    if targets.dim() > 1:
+                        targets = targets.squeeze(-1)
+                    
+                    all_predictions.extend(outputs.cpu().numpy())
+                    all_targets.extend(targets.cpu().numpy())
+                    all_probabilities.extend(outputs.cpu().numpy())  # For adoption, outputs are probabilities
+                    batch_count += 1
+            
+            # Convert to numpy arrays
+            predictions = np.array(all_predictions)
+            targets = np.array(all_targets)
+            probabilities = np.array(all_probabilities)
+            
+            # Calculate regression metrics
+            mse = mean_squared_error(targets, predictions)
+            rmse = np.sqrt(mse)
+            mae = mean_absolute_error(targets, predictions)
+            r2 = r2_score(targets, targets)  # Perfect correlation as baseline
+            
+            try:
+                r2_actual = r2_score(targets, predictions)
+            except:
+                r2_actual = 0.0
+            
+            # Convert continuous predictions to adoption stages
+            predicted_stages = []
+            actual_stages = []
+            
+            for score in predictions:
+                if score > 0.8:
+                    predicted_stages.append('Innovators')
+                elif score > 0.6:
+                    predicted_stages.append('Early_Adopters')
+                elif score > 0.4:
+                    predicted_stages.append('Early_Majority')
+                elif score > 0.2:
+                    predicted_stages.append('Late_Majority')
+                else:
+                    predicted_stages.append('Laggards')
+            
+            for score in targets:
+                if score > 0.8:
+                    actual_stages.append('Innovators')
+                elif score > 0.6:
+                    actual_stages.append('Early_Adopters')
+                elif score > 0.4:
+                    actual_stages.append('Early_Majority')
+                elif score > 0.2:
+                    actual_stages.append('Late_Majority')
+                else:
+                    actual_stages.append('Laggards')
+            
+            # Calculate classification metrics
+            stage_accuracy = accuracy_score(actual_stages, predicted_stages)
+            
+            # Calculate precision, recall, F1 for each stage
+            precision, recall, f1, support = precision_recall_fscore_support(
+                actual_stages, predicted_stages, average=None, labels=stage_names, zero_division=0
+            )
+            
+            # Overall metrics
+            precision_avg, recall_avg, f1_avg, _ = precision_recall_fscore_support(
+                actual_stages, predicted_stages, average='weighted', zero_division=0
+            )
+            
+            # Distribution analysis
+            stage_distribution = defaultdict(int)
+            for stage in predicted_stages:
+                stage_distribution[stage] += 1
+            
+            actual_distribution = defaultdict(int)
+            for stage in actual_stages:
+                actual_distribution[stage] += 1
+            
+            # Create confusion matrix
+            try:
+                conf_matrix = confusion_matrix(actual_stages, predicted_stages, labels=stage_names)
+                conf_matrix_list = conf_matrix.tolist()
+            except:
+                conf_matrix_list = []
+            
+            # Adoption-specific metrics
+            avg_adoption_score = float(np.mean(predictions))
+            adoption_variance = float(np.var(predictions))
+            high_adoption_rate = float(np.mean(predictions > 0.6))  # Early adopters + Innovators
+            
+            metrics = {
+                'use_case': 'Reddit_Adoption_Chasm',
+                'task_type': 'adoption_stage_classification',
+                'test_samples': len(predictions),
+                'avg_test_loss': test_loss / max(batch_count, 1),
+                
+                # Regression metrics
+                'mse': float(mse),
+                'rmse': float(rmse),
+                'mae': float(mae),
+                'r2_score': float(r2_actual),
+                
+                # Classification metrics
+                'stage_accuracy': float(stage_accuracy),
+                'precision_weighted': float(precision_avg),
+                'recall_weighted': float(recall_avg),
+                'f1_weighted': float(f1_avg),
+                
+                # Per-stage metrics
+                'stage_metrics': {
+                    stage_names[i]: {
+                        'precision': float(precision[i]) if i < len(precision) else 0.0,
+                        'recall': float(recall[i]) if i < len(recall) else 0.0,
+                        'f1_score': float(f1[i]) if i < len(f1) else 0.0,
+                        'support': int(support[i]) if i < len(support) else 0
+                    }
+                    for i in range(len(stage_names))
+                },
+                
+                # Distribution analysis
+                'predicted_distribution': dict(stage_distribution),
+                'actual_distribution': dict(actual_distribution),
+                'confusion_matrix': conf_matrix_list,
+                'stage_labels': stage_names,
+                
+                # Adoption-specific insights
+                'avg_adoption_score': avg_adoption_score,
+                'adoption_variance': adoption_variance,
+                'high_adoption_rate': high_adoption_rate,
+                'innovation_readiness': float(np.mean(predictions > 0.7)),
+                'market_maturity': float(np.mean(predictions < 0.3)),
+                
+                # Detailed predictions for analysis
+                'sample_predictions': {
+                    'adoption_scores': predictions[:10].tolist(),
+                    'actual_scores': targets[:10].tolist(),
+                    'predicted_stages': predicted_stages[:10],
+                    'actual_stages': actual_stages[:10]
+                }
+            }
+            
+            return metrics
+
+        def evaluate_standard_lstm(model_obj, test_loader_obj, config):
+            
+            print("Running standard LSTM evaluation")
+            
+            # Use the model's built-in eval_step if available
+            if hasattr(model_obj, 'eval_step') and callable(getattr(model_obj, 'eval_step')):
+                metrics = model_obj.eval_step(test_loader_obj)
+                
+                # Ensure metrics is a dictionary
+                if not isinstance(metrics, dict):
+                    metrics = {'evaluation_result': metrics}
+                
+                # Add metadata
+                metrics.update({
+                    'use_case': config.get('use_case', 'Unknown'),
+                    'task_type': config.get('task_type', 'regression'),
+                    'model_type': 'Standard_LSTM'
+                })
+                
+            else:
+                # Fallback evaluation
+                model_obj.eval()
+                test_loss = 0.0
+                batch_count = 0
+                
+                with torch.no_grad():
+                    for inputs, targets in test_loader_obj:
+                        if hasattr(model_obj, 'forward'):
+                            outputs = model_obj(inputs)
+                            if hasattr(model_obj, 'criterion'):
+                                loss = model_obj.criterion(outputs, targets)
+                                test_loss += loss.item()
+                        batch_count += 1
+                
+                metrics = {
+                    'use_case': config.get('use_case', 'Unknown'),
+                    'task_type': config.get('task_type', 'regression'),
+                    'model_type': 'Standard_LSTM',
+                    'avg_test_loss': test_loss / max(batch_count, 1),
+                    'test_batches': batch_count
+                }
+            
+            return metrics
+
+        def create_evaluation_summary(metrics, config):
+            
+            summary = {
+                'evaluation_timestamp': str(torch.datetime.now()) if hasattr(torch, 'datetime') else 'unknown',
+                'model_configuration': {
+                    'use_case': config.get('use_case', 'Unknown'),
+                    'task_type': config.get('task_type', 'regression'),
+                    'hidden_dim': config.get('hidden_dim', 'Unknown'),
+                    'num_layers': config.get('num_layers', 'Unknown'),
+                    'dropout': config.get('dropout', 'Unknown'),
+                    'feature_count': len(config.get('feature_columns', []))
+                },
+                'evaluation_results': metrics
+            }
+            
+            # Add performance interpretation for adoption chasm
+            if config.get('use_case') == 'Reddit_Adoption_Chasm':
+                summary['performance_interpretation'] = {
+                    'model_quality': 'Excellent' if metrics.get('stage_accuracy', 0) > 0.8 
+                                   else 'Good' if metrics.get('stage_accuracy', 0) > 0.6 
+                                   else 'Needs Improvement',
+                    'adoption_insights': {
+                        'dominant_stage': max(metrics.get('predicted_distribution', {}), 
+                                            key=metrics.get('predicted_distribution', {}).get, 
+                                            default='Unknown'),
+                        'market_readiness': 'High' if metrics.get('high_adoption_rate', 0) > 0.3
+                                          else 'Medium' if metrics.get('high_adoption_rate', 0) > 0.1 
+                                          else 'Low'
+                    }
+                }
+            
+            return summary
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--trained_model', type=str, required=True)
+        parser.add_argument('--test_loader', type=str, required=True)
+        parser.add_argument('--config', type=str, required=True)
+        parser.add_argument('--eval_metrics', type=str, required=True)
+        parser.add_argument('--eval_metrics_json', type=str, required=True)
+        args = parser.parse_args()
+
+        config = json.loads(args.config)
+
+        with open(args.test_loader, 'rb') as f:
+            test_loader_obj = pickle.load(f)
+
+        with open(args.trained_model, 'rb') as f:
+            model_obj = pickle.load(f)
+
+        print("Starting Enhanced LSTM Model Evaluation")
+        print(f"Use Case: {config.get('use_case', 'Unknown')}")
+        print(f"Task Type: {config.get('task_type', 'regression')}")
+
+        # Choose evaluation method based on use case
+        if config.get('use_case') == 'Reddit_Adoption_Chasm' or config.get('task_type') == 'adoption_stage_classification':
+            metrics = evaluate_adoption_classification(model_obj, test_loader_obj, config)
+            print("Completed Reddit Adoption Chasm Evaluation")
+            
+            # Print key results
+            print(f"  Stage Classification Accuracy: {metrics.get('stage_accuracy', 0):.4f}")
+            print(f"  RMSE: {metrics.get('rmse', 0):.4f}")
+            print(f"  Average Adoption Score: {metrics.get('avg_adoption_score', 0):.4f}")
+            print(f"  High Adoption Rate: {metrics.get('high_adoption_rate', 0):.4f}")
+            
+        else:
+            metrics = evaluate_standard_lstm(model_obj, test_loader_obj, config)
+            print("Completed Standard LSTM Evaluation")
+            
+            # Print key results
+            if 'avg_test_loss' in metrics:
+                print(f"  Average Test Loss: {metrics['avg_test_loss']:.6f}")
+
+        # Create comprehensive evaluation summary
+        evaluation_summary = create_evaluation_summary(metrics, config)
+
+        # Save evaluation metrics
+        os.makedirs(os.path.dirname(args.eval_metrics), exist_ok=True)
+        with open(args.eval_metrics, "w") as f:
+            json.dump(evaluation_summary, f, indent=2)
+
+        os.makedirs(os.path.dirname(args.eval_metrics_json), exist_ok=True)
+        with open(args.eval_metrics_json, "w") as f:
+            json.dump(evaluation_summary, f, indent=2)
+
+        print(f"Saved comprehensive evaluation metrics to {args.eval_metrics}")
+        print(f"Saved evaluation metrics JSON to {args.eval_metrics_json}")
+        
+        # Print final summary
+        print(f"\\nEvaluation Summary:")
+        print(f"  Model: {evaluation_summary['model_configuration']['use_case']}")
+        print(f"  Task: {evaluation_summary['model_configuration']['task_type']}")
+        print(f"  Features: {evaluation_summary['model_configuration']['feature_count']}")
+        
+        if config.get('use_case') == 'Reddit_Adoption_Chasm':
+            perf = evaluation_summary.get('performance_interpretation', {})
+            print(f"  Model Quality: {perf.get('model_quality', 'Unknown')}")
+            print(f"  Market Readiness: {perf.get('adoption_insights', {}).get('market_readiness', 'Unknown')}")
+        
+        print("Enhanced LSTM Model Evaluation Completed Successfully!")
+    args:
+      - --trained_model
+      - {inputPath: trained_model}
+      - --test_loader
+      - {inputPath: test_loader}
+      - --config
+      - {inputValue: config}
+      - --eval_metrics
+      - {outputPath: eval_metrics}
+      - --eval_metrics_json
+      - {outputPath: eval_metrics_json}
