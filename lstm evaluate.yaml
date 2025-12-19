@@ -1,4 +1,4 @@
-name: Evaluate LSTM Model
+name: Evaluate LSTM Model 1
 description: Evaluates the trained LSTM model.
 inputs:
   - {name: trained_model, type: Model}
@@ -25,10 +25,9 @@ implementation:
         import pickle
         import sys
         import torch
-
+        import numpy as np
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
         
-        from nesy_factory.RNNs import LSTM
-
         parser = argparse.ArgumentParser()
         parser.add_argument('--trained_model', type=str, required=True)
         parser.add_argument('--test_loader', type=str, required=True)
@@ -36,27 +35,159 @@ implementation:
         parser.add_argument('--eval_metrics', type=str, required=True)
         parser.add_argument('--eval_metrics_json', type=str, required=True)
         args = parser.parse_args()
-
+        
         config = json.loads(args.config)
-
+        
         with open(args.test_loader, 'rb') as f:
             test_loader_obj = pickle.load(f)
-
+        
         with open(args.trained_model, 'rb') as f:
             model_obj = pickle.load(f)
-
+        
         print("Starting LSTM Model Evaluation")
-        metrics = model_obj.eval_step(test_loader_obj)
+        
+        # Debug: Check model and data structure
+        print(f"Model type: {type(model_obj)}")
+        print(f"Test loader type: {type(test_loader_obj)}")
+        
+        # Set model to evaluation mode
+        model_obj.eval()
+        all_predictions = []
+        all_targets = []
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(test_loader_obj):
+                # Handle different batch structures
+                if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                    data, target = batch
+                    
+                    # Debug shapes
+                    print(f"Batch {batch_idx}: Data shape: {data.shape}, Target shape: {target.shape}")
+                    
+                    # Forward pass
+                    output = model_obj(data)
+                    print(f"Batch {batch_idx}: Model output shape: {output.shape}")
+                    
+                    # Handle dimension mismatch
+                    if output.dim() == 2 and target.dim() == 1:
+                        # Binary classification: convert 2D output to class predictions
+                        predictions = torch.argmax(output, dim=1)
+                    elif output.dim() == 2 and target.dim() == 2:
+                        # Already matching dimensions
+                        predictions = output
+                    elif output.dim() == 1 and target.dim() == 1:
+                        # Single output regression
+                        predictions = output
+                    else:
+                        # Default: try to squeeze/unsqueeze to match dimensions
+                        if output.dim() > target.dim():
+                            predictions = torch.argmax(output, dim=1) if output.size(1) > 1 else output.squeeze()
+                        else:
+                            predictions = output
+                    
+                    # Ensure predictions and targets are 1D for metric calculation
+                    pred_np = predictions.cpu().numpy().flatten()
+                    target_np = target.cpu().numpy().flatten()
+                    
+                    all_predictions.extend(pred_np)
+                    all_targets.extend(target_np)
+                    
+                    print(f"Batch {batch_idx}: Predictions shape: {pred_np.shape}, Targets shape: {target_np.shape}")
+                    print(f"Batch {batch_idx}: Predictions sample: {pred_np[:5]}")
+                    print(f"Batch {batch_idx}: Targets sample: {target_np[:5]}")
+                    
+                else:
+                    print(f"Warning: Unexpected batch structure at batch {batch_idx}: {type(batch)}")
+                    continue
+        
+        print(f"Total predictions: {len(all_predictions)}, Total targets: {len(all_targets)}")
+        
+        # Calculate metrics
+        if len(all_predictions) > 0 and len(all_targets) > 0:
+            # Ensure same length
+            min_len = min(len(all_predictions), len(all_targets))
+            all_predictions = all_predictions[:min_len]
+            all_targets = all_targets[:min_len]
+            
+            print(f"Unique predictions: {np.unique(all_predictions)}")
+            print(f"Unique targets: {np.unique(all_targets)}")
+            
+            try:
+                # Convert to proper types for sklearn
+                all_predictions = np.array(all_predictions)
+                all_targets = np.array(all_targets)
+                
+                # For classification metrics, ensure integer type
+                if np.issubdtype(all_predictions.dtype, np.floating):
+                    all_predictions = all_predictions.round().astype(int)
+                if np.issubdtype(all_targets.dtype, np.floating):
+                    all_targets = all_targets.round().astype(int)
+                
+                # Calculate accuracy
+                accuracy = accuracy_score(all_targets, all_predictions)
+                
+                # Determine if binary or multi-class
+                n_classes = len(np.unique(all_targets))
+                
+                if n_classes == 2:
+                    # Binary classification
+                    precision = precision_score(all_targets, all_predictions, average='binary', zero_division=0)
+                    recall = recall_score(all_targets, all_predictions, average='binary', zero_division=0)
+                    f1 = f1_score(all_targets, all_predictions, average='binary', zero_division=0)
+                    avg_type = 'binary'
+                else:
+                    # Multi-class classification
+                    precision = precision_score(all_targets, all_predictions, average='weighted', zero_division=0)
+                    recall = recall_score(all_targets, all_predictions, average='weighted', zero_division=0)
+                    f1 = f1_score(all_targets, all_predictions, average='weighted', zero_division=0)
+                    avg_type = 'weighted'
+                
+                metrics = {
+                    'accuracy': float(accuracy),
+                    'precision': float(precision),
+                    'recall': float(recall),
+                    'f1_score': float(f1),
+                    'average_type': avg_type,
+                    'num_classes': int(n_classes),
+                    'num_samples': int(len(all_targets)),
+                    'unique_predictions': [int(x) for x in np.unique(all_predictions)],
+                    'unique_targets': [int(x) for x in np.unique(all_targets)]
+                }
+                
+                print(f"Evaluation Metrics:")
+                print(f"  Accuracy: {accuracy:.4f}")
+                print(f"  Precision ({avg_type}): {precision:.4f}")
+                print(f"  Recall ({avg_type}): {recall:.4f}")
+                print(f"  F1-Score ({avg_type}): {f1:.4f}")
+                print(f"  Number of samples: {len(all_targets)}")
+                print(f"  Number of classes: {n_classes}")
+                
+            except Exception as e:
+                print(f"Error calculating metrics: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                metrics = {
+                    'error': str(e),
+                    'predictions_sample': all_predictions[:10].tolist() if len(all_predictions) > 10 else all_predictions.tolist(),
+                    'targets_sample': all_targets[:10].tolist() if len(all_targets) > 10 else all_targets.tolist(),
+                    'num_predictions': len(all_predictions),
+                    'num_targets': len(all_targets)
+                }
+        else:
+            metrics = {'error': 'No predictions or targets generated'}
+            print("Error: No predictions or targets generated")
+        
         print("Finished LSTM Model Evaluation")
-
+        
+        # Create output directories and save
         os.makedirs(os.path.dirname(args.eval_metrics), exist_ok=True)
         with open(args.eval_metrics, "w") as f:
-            json.dump(metrics, f)
-
+            json.dump(metrics, f, indent=2)
+        
         os.makedirs(os.path.dirname(args.eval_metrics_json), exist_ok=True)
         with open(args.eval_metrics_json, "w") as f:
-            json.dump(metrics, f)
-
+            json.dump(metrics, f, indent=2)
+        
         print(f"Saved evaluation metrics to {args.eval_metrics}")
         print(f"Saved evaluation metrics JSON to {args.eval_metrics_json}")
     args:
