@@ -25,6 +25,7 @@ implementation:
         import pickle
         import sys
         import torch
+        import uuid
         
         from nesy_factory.RNNs import LSTM
 
@@ -232,9 +233,9 @@ implementation:
 
         # Training completion summary
         training_mode = 'forward_forward' if (hasattr(model_obj, 'use_forward_forward') and model_obj.use_forward_forward) else \
-                       'cafo' if (hasattr(model_obj, 'use_cafo') and model_obj.use_cafo) else 'traditional'
+                        'cafo' if (hasattr(model_obj, 'use_cafo') and model_obj.use_cafo) else 'traditional'
         
-        print(f"\\n LSTM Model Training Completed - Mode: {training_mode.upper()}")
+        print(f"\n LSTM Model Training Completed - Mode: {training_mode.upper()}")
         print(f" Loss entries recorded: {len(epoch_loss_data)}")
 
         # Save trained model
@@ -244,20 +245,11 @@ implementation:
         with open(args.trained_model, 'wb') as f:
             pickle.dump(model_obj, f)
 
-        # Save epoch loss data with training summary
-        training_summary = {
-            'training_mode': training_mode,
-            'total_loss_entries': len(epoch_loss_data),
-            'final_loss': epoch_loss_data[-1]['loss'] if epoch_loss_data else 0.0,
-            'model_config': {
-                'input_dim': model_obj.input_dim,
-                'hidden_dim': model_obj.hidden_dim,
-                'output_dim': model_obj.output_dim,
-                'training_method': training_mode
-            },
-            'loss_history': epoch_loss_data
-        }
+        # Add UIDs to epoch loss data
+        for entry in epoch_loss_data:
+            entry['uid'] = str(uuid.uuid4())
 
+        # Save epoch loss data
         output_dir_epoch_loss = os.path.dirname(args.epoch_loss)
         if output_dir_epoch_loss and not os.path.exists(output_dir_epoch_loss):
             os.makedirs(output_dir_epoch_loss, exist_ok=True)
