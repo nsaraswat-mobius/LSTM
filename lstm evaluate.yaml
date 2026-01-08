@@ -1,4 +1,4 @@
-name: Evaluate LSTM Model 2
+name: Evaluate LSTM Model 3
 description: Evaluates the trained LSTM model.
 inputs:
   - {name: trained_model, type: Model}
