@@ -119,7 +119,7 @@ implementation:
                     'num_samples': int(len(all_targets))
                 }
                 
-                print(f"Evaluation Metrics:\n Accuracy: {accuracy:.4f}\n Precision: {precision:.4f}\n Recall: {recall:.4f}\n F1: {f1:.4f}")
+                print(f"Evaluation Metrics:\\n Accuracy: {accuracy:.4f}\n Precision: {precision:.4f}\n Recall: {recall:.4f}\n F1: {f1:.4f}")
                 
             except Exception as e:
                 print(f"Error calculating metrics: {str(e)}")
